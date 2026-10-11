@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router';
 import {
   GitCommitHorizontal,
   Package,
@@ -7,6 +8,7 @@ import {
 } from 'lucide-react';
 
 import { authClient } from '../lib/auth-client';
+import { useAuth } from '../lib/auth-context';
 import { SignInCard } from '../components/sign-in-card';
 import { SignUpCard, type SignUpCredentials } from '../components/sign-up-card';
 import { Badge } from '../shadcn/components/ui/badge';
@@ -23,7 +25,6 @@ export interface Feature {
 type AuthMode = 'signin' | 'signup';
 
 export interface LoginPageProps {
-  onSignIn: () => Promise<boolean>;
   productName?: string;
   description?: string;
   features?: readonly Feature[];
@@ -48,14 +49,14 @@ const defaultFeatures: readonly Feature[] = [
 ];
 
 export default function LoginPage({
-  onSignIn,
   productName = 'SideProject',
   description =
   'Point it at a repository. Get snapshots of files, dependencies and ownership across its whole history.',
   features = defaultFeatures,
 }: LoginPageProps) {
+  const navigate = useNavigate();
+  const { refreshSession } = useAuth();
   const [mode, setMode] = useState<AuthMode>('signin');
-  const [loginActive, setLoginActive] = useState(false);
 
   async function handleSignIn({
     email,
@@ -73,13 +74,15 @@ export default function LoginPage({
       throw new Error(result.error.message || 'Authentication failed.');
     }
 
-    const success = await onSignIn();
+    const success = await refreshSession();
 
     if (!success) {
       throw new Error(
         'Sign-in succeeded, but no session was found. Check your authentication configuration.',
       );
     }
+
+    navigate('/landing', { replace: true });
   }
 
 
@@ -98,8 +101,16 @@ export default function LoginPage({
       throw new Error(result.error.message || 'Account creation failed.');
     }
 
-    setLoginActive(true);
-    setMode('signin');
+    // Better Auth signs the new user in on sign-up, so pick up that session
+    const success = await refreshSession();
+
+    if (!success) {
+      throw new Error(
+        'Account created, but no session was found. Try signing in.',
+      );
+    }
+
+    navigate('/landing', { replace: true });
   }
 
   function changeMode(nextMode: AuthMode) {
@@ -152,7 +163,7 @@ export default function LoginPage({
           aria-labelledby="auth-title"
         >
 
-          {(mode === 'signin' || loginActive) ? (
+          {mode === 'signin' ? (
             <SignInCard
               onSignIn={handleSignIn}
               onSignUp={() => changeMode('signup')}

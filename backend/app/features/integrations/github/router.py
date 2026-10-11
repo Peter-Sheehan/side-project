@@ -17,6 +17,8 @@ from app.features.integrations.github.client import (
 router = APIRouter(prefix="/integrations/github", tags=["github"])
 
 STATE_COOKIE = "oauth_state"
+# Frontend page the callback returns to; it shows the result of linking.
+RETURN_PATH = "/landing"
 GitHub = Annotated[GitHubClient, Depends(get_github_client)]
 
 
@@ -70,14 +72,14 @@ def github_callback(
     oauth_state: Annotated[str | None, Cookie(alias=STATE_COOKIE)] = None,
 ) -> RedirectResponse:
     if error or not code or not state:
-        return _redirect("/settings?error=github_denied")
+        return _redirect(f"{RETURN_PATH}?error=github_denied")
     try:
         service.complete_link(
             db, r, github, code=code, state=state, browser_state=oauth_state
         )
     except service.LinkError as e:
-        return _redirect(f"/settings?error={e.reason}")
-    return _redirect("/settings?linked=github")
+        return _redirect(f"{RETURN_PATH}?error={e.reason}")
+    return _redirect(f"{RETURN_PATH}?linked=github")
 
 
 @router.get("", response_model=GitHubLink)

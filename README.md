@@ -227,7 +227,7 @@ What a user's token can reach is limited three ways: the App's permissions, the 
 ### Linking your account
 
 1. Put the org App's ID and secret in `.env` as `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` (see [step 2](#2-get-the-org-github-app-credentials)), then run `docker compose up -d`.
-2. Sign in at <http://localhost:3000>, then open <http://localhost:3000/api/integrations/github/link> in the same browser. Approve the App on GitHub. You should land on `/settings?linked=github`.
+2. Sign in at <http://localhost:3000>, then open <http://localhost:3000/api/integrations/github/link> in the same browser. Approve the App on GitHub. You should land back on `/landing`, showing your GitHub username and repositories.
 
 Start the link from the same origin as the backend. A local frontend proxied to a remote backend fails with `invalid_state`, because the callback returns to the remote address.
 

@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "react-router";
+
 import Header from "../components/header";
+import { useAuth } from "../lib/auth-context";
 
-type SuccessPageProps = {
-    email: string;
-    onSignOut: () => void;
-};
-
-// The backend redirects to /settings?error=<reason> when linking fails.
+// The backend redirects to /landing?error=<reason> when linking fails.
 const linkErrors: Record<string, string> = {
     github_denied: "GitHub access wasn't granted.",
     github_error: "GitHub rejected the request. Try again.",
@@ -98,19 +96,22 @@ function RepoList({ onRevoked }: { onRevoked: () => void }) {
     );
 }
 
-export default function SuccessPage({ email, onSignOut }: SuccessPageProps) {
+export default function SuccessPage() {
+    const { session, signOut } = useAuth();
+    const email = session?.user.email ?? "";
+    const [searchParams, setSearchParams] = useSearchParams();
     const [github, setGithub] = useState<GitHubState>({ status: "loading" });
     const [linkError] = useState(() => {
-        const reason = new URLSearchParams(window.location.search).get("error");
+        const reason = searchParams.get("error");
         return reason ? (linkErrors[reason] ?? "Linking GitHub failed.") : null;
     });
 
+    // Drop ?linked= / ?error= so a refresh doesn't show the message again.
     useEffect(() => {
-        // Drop ?linked= / ?error= so a refresh doesn't show the message again.
-        if (window.location.search) {
-            window.history.replaceState(null, "", "/");
-        }
+        if (searchParams.size > 0) setSearchParams({}, { replace: true });
+    }, [searchParams, setSearchParams]);
 
+    useEffect(() => {
         // The backend checks with GitHub, so "linked" means GitHub still accepts it.
         fetch("/api/integrations/github")
             .then(async (res) => {
@@ -190,7 +191,7 @@ export default function SuccessPage({ email, onSignOut }: SuccessPageProps) {
 
                     <button
                         type="button"
-                        onClick={onSignOut}
+                        onClick={signOut}
                         className="mt-3 w-full rounded-lg border px-4 py-3"
                     >
                         Sign out

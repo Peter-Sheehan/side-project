@@ -110,7 +110,7 @@ def test_callback_stores_encrypted_tokens_for_signed_in_user(
 ):
     sign_in("ba_alice")
     r = _link(client)
-    assert r.headers["location"].endswith("/settings?linked=github")
+    assert r.headers["location"].endswith("/landing?linked=github")
     conn = db.scalar(
         select(ProviderConnection).where(ProviderConnection.user_id == "ba_alice")
     )
