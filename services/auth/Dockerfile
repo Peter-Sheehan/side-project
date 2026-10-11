@@ -10,7 +10,8 @@ COPY src ./src
 RUN pnpm run build
 
 FROM build AS migrate
-CMD ["pnpm", "run", "auth:migrate:docker"]
+# Migrate, then create the dev account if SEED_DEV_ACCOUNT=true (see src/seed.ts).
+CMD ["sh", "-c", "pnpm run auth:migrate:docker && node dist/seed.js"]
 
 FROM base AS prod
 ENV NODE_ENV=production

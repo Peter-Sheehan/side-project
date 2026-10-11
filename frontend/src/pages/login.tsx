@@ -57,6 +57,7 @@ export default function LoginPage({
   const navigate = useNavigate();
   const { refreshSession } = useAuth();
   const [mode, setMode] = useState<AuthMode>('signin');
+  const [notice, setNotice] = useState<string | null>(null);
 
   async function handleSignIn({
     email,
@@ -101,19 +102,14 @@ export default function LoginPage({
       throw new Error(result.error.message || 'Account creation failed.');
     }
 
-    // Better Auth signs the new user in on sign-up, so pick up that session
-    const success = await refreshSession();
-
-    if (!success) {
-      throw new Error(
-        'Account created, but no session was found. Try signing in.',
-      );
-    }
-
-    navigate('/landing', { replace: true });
+    // Sign-up doesn't start a session (autoSignIn is off in the auth service),
+    // so send the user to the sign-in card.
+    setNotice('Account created. Sign in to continue.');
+    setMode('signin');
   }
 
   function changeMode(nextMode: AuthMode) {
+    setNotice(null);
     setMode(nextMode);
   }
 
@@ -167,6 +163,7 @@ export default function LoginPage({
             <SignInCard
               onSignIn={handleSignIn}
               onSignUp={() => changeMode('signup')}
+              notice={notice}
               termsHref="/terms"
               privacyHref="/privacy"
             />

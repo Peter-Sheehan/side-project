@@ -91,7 +91,7 @@ docker compose ps -a
 
 `auth-migrate` and `backend-migrate` should show `Exited (0)`. Everything else should be `Up`, and `backend`, `postgres` and `redis` should be `(healthy)`.
 
-Then open <http://localhost:3000> and sign in. The backend API docs are at <http://localhost:3000/api/docs>.
+Then open <http://localhost:3000> and sign in as **dev@gmail.com** / **secret123**. This shared dev account is created on startup while `SEED_DEV_ACCOUNT=true` (the default in `.env.example`; if your `.env` predates it, add that line and run `docker compose up -d`). You can also create your own account. The backend API docs are at <http://localhost:3000/api/docs>.
 
 ### 6. Run the checks
 
@@ -290,8 +290,7 @@ The same compose file runs on a Linux VM for testing. Everything is reached thro
 2. In the VM's `.env`, set the address you'll open in the browser:
    ```dotenv
    PUBLIC_URL=http://203.0.113.10:3000      # your VM's IP or hostname
-   ```
-   To serve on port 80 instead, also set `FRONTEND_PORT=80` and drop `:3000` from `PUBLIC_URL`.
+   To serve on port 80 instead, also set `FRONTEND_PORT=80` and drop `:3000` from `PUBLIC_URL`. For the shared dev account, set a strong `SEED_DEV_PASSWORD` (and optionally `SEED_DEV_EMAIL`) and share it via the password manager. The default `secret123` is public, so the seed skips it unless `PUBLIC_URL` is localhost. Or set `SEED_DEV_ACCOUNT=false` for no dev account.
 3. **Register the callback URL for that address.** Ask an org admin to add `<PUBLIC_URL>/api/integrations/github/callback` to the org GitHub App's redirect URIs, and put the App's ID and secret in the VM's `.env`.
 4. Allow the port in your cloud provider's firewall or security group (inbound TCP 3000, or 80).
 5. Start it with `scripts/setup.sh --up`.

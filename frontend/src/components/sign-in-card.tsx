@@ -23,6 +23,8 @@ export interface SignInCredentials {
 export interface SignInCardProps {
   onSignIn: (credentials: SignInCredentials) => Promise<void>;
   onSignUp?: () => void;
+  /** A message shown above the form, e.g. after creating an account. */
+  notice?: string | null;
   forgotPasswordHref?: string;
   signUpHref?: string;
   termsHref?: string;
@@ -33,6 +35,7 @@ export interface SignInCardProps {
 export function SignInCard({
   onSignIn,
   onSignUp,
+  notice,
   forgotPasswordHref = '/forgot-password',
   signUpHref = '/sign-up',
   termsHref = '/terms',
@@ -92,6 +95,12 @@ export function SignInCard({
               disabled={pending}
             />
           </div>
+
+          {notice && !error && (
+            <p role="status" className={styles.notice}>
+              {notice}
+            </p>
+          )}
 
           {error && (
             <p role="alert" className={styles.error}>

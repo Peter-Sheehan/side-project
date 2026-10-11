@@ -153,6 +153,18 @@ export const auth = betterAuth({
 
     emailAndPassword: {
         enabled: true,
+        // Sign-up only creates the account; the user then signs in on the
+        // sign-in card. Without this, sign-up also starts a session.
+        autoSignIn: false,
+    },
+
+    // Sessions end after 30 minutes without activity. GET /api/auth/get-session
+    // renews one (new expiry in the DB, new cookie) once it's over 5 minutes old;
+    // the frontend calls it while the user is active. The backend's own lookups
+    // pass disableRefresh, so API calls alone don't keep a session alive.
+    session: {
+        expiresIn: 60 * 30,
+        updateAge: 60 * 5,
     },
 
     // Sessions end after 30 minutes without activity. GET /api/auth/get-session
