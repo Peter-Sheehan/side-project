@@ -9,11 +9,15 @@ from app.features.integrations.github.client import (
     GitHubAuthError,
     GitHubClient,
     GitHubError,
+    GitHubNotFound,
     GitHubProfile,
+    GitHubRateLimited,
     GitHubRepo,
+    RepoView,
     TokenSet,
     get_github_client,
 )
+from app.features.integrations.github.service import parse_repo_ref
 from app.features.integrations.models import ProviderConnection
 from app.main import app
 
@@ -162,9 +166,25 @@ def test_unlink_removes_connection(client, db, sign_in, fake_github):
 
 
 def _status(client):
+    """status and login from GET /integrations/github (install_url is tested
+    separately, since it depends on settings)."""
     r = client.get("/api/integrations/github")
     assert r.status_code == 200
-    return r.json()
+    return {k: r.json()[k] for k in ("status", "login")}
+
+
+def test_install_url_comes_from_app_slug(
+    client, sign_in, fake_github, override_settings
+):
+    sign_in("ba_alice")
+    _link(client)
+    override_settings(GITHUB_APP_SLUG="our-app")
+    assert (
+        client.get("/api/integrations/github").json()["install_url"]
+        == "https://github.com/apps/our-app/installations/new"
+    )
+    override_settings(GITHUB_APP_SLUG="")
+    assert client.get("/api/integrations/github").json()["install_url"] is None
 
 
 def _expire_token(db, user_id="ba_alice"):
@@ -244,3 +264,95 @@ def test_list_repos_refreshes_expired_token(client, db, sign_in, fake_github):
     assert fake_github.listed_with == "ghu_refreshed"
     db.refresh(conn)
     assert decrypt(conn.refresh_token_enc) == "ghr_refreshed"  # rotated token stored
+
+
+# ---- Viewing a repo by URL
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "https://github.com/octo/hello",
+        "https://github.com/octo/hello/",
+        "https://github.com/octo/hello.git",
+        "http://www.github.com/octo/hello/tree/main/src",
+        "github.com/octo/hello?tab=readme",
+        "  octo/hello  ",
+    ],
+)
+def test_parse_repo_ref_accepts_common_forms(text):
+    assert parse_repo_ref(text) == ("octo", "hello")
+
+
+def test_parse_repo_ref_keeps_dots_in_names():
+    assert parse_repo_ref("https://github.com/octo/my.site") == ("octo", "my.site")
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["", "octo", "https://gitlab.com/octo/hello", "https://github.com/octo", "../x/y"],
+)
+def test_parse_repo_ref_rejects_other_input(text):
+    assert parse_repo_ref(text) is None
+
+
+def _view(client, url="https://github.com/octo/hello"):
+    return client.get("/api/integrations/github/repos/view", params={"url": url})
+
+
+@pytest.fixture
+def viewed(fake_github):
+    """Records the (token, owner, name) of each view_repo call."""
+    calls = []
+
+    def view_repo(token, owner, name):
+        fake_github._maybe_fail()
+        calls.append((token, owner, name))
+        return RepoView(
+            "octo/hello",
+            None,
+            "https://github.com/octo/hello",
+            False,
+            "main",
+            None,
+            0,
+            0,
+            [],
+        )
+
+    fake_github.view_repo = view_repo
+    return calls
+
+
+def test_view_requires_sign_in(client, viewed):
+    assert _view(client).status_code == 401
+
+
+def test_view_is_anonymous_without_a_link(client, sign_in, viewed):
+    sign_in()
+    r = _view(client)
+    assert r.status_code == 200 and r.json()["full_name"] == "octo/hello"
+    assert viewed == [(None, "octo", "hello")]
+
+
+def test_view_uses_the_linked_token(client, sign_in, viewed):
+    sign_in()
+    _link(client)
+    assert _view(client).status_code == 200
+    assert viewed == [("ghu_test", "octo", "hello")]
+
+
+def test_view_rejects_non_github_urls(client, sign_in, viewed):
+    sign_in()
+    assert _view(client, "https://example.com/x").status_code == 422
+    assert viewed == []
+
+
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [(GitHubNotFound("x"), 404), (GitHubRateLimited("x"), 429)],
+)
+def test_view_maps_github_errors(client, sign_in, viewed, fake_github, error, code):
+    sign_in()
+    fake_github.error = error
+    assert _view(client).status_code == code

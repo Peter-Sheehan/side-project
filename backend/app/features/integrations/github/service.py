@@ -2,6 +2,7 @@
 callers pass in a DB session, Redis and a GitHubClient."""
 
 import json
+import re
 import secrets
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -17,6 +18,7 @@ from app.features.integrations.github.client import (
     GitHubClient,
     GitHubError,
     GitHubRepo,
+    RepoView,
     TokenSet,
     make_pkce,
 )
@@ -138,6 +140,35 @@ def list_repos(
     if conn is None:
         return None
     return _call(db, github, conn, github.list_repos)
+
+
+# github.com/<owner>/<repo>[.git][/anything], with or without scheme or "www.",
+# or just <owner>/<repo>. Owner names are letters, digits and single hyphens.
+_REPO_REF = re.compile(
+    r"^(?:(?:https?://)?(?:www\.)?github\.com/)?"
+    r"(?P<owner>[A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))/"
+    r"(?P<name>[A-Za-z0-9._-]{1,100}?)(?:\.git)?(?:[/?#].*)?$"
+)
+
+
+def parse_repo_ref(text: str) -> tuple[str, str] | None:
+    """(owner, name) from a GitHub repo URL or "owner/name", else None."""
+    m = _REPO_REF.match(text.strip())
+    if m is None or m["name"] in (".", ".."):
+        return None
+    return m["owner"], m["name"]
+
+
+def view_repo(
+    db: Session, github: GitHubClient, user_id: str, owner: str, name: str
+) -> RepoView:
+    """Look up a repo, with the user's token if they've linked GitHub (higher
+    rate limit, and their private repos too) or anonymously if not.
+    Raises LinkRevoked, GitHubNotFound or GitHubError."""
+    conn = _get_connection(db, user_id)
+    if conn is None:
+        return github.view_repo(None, owner, name)
+    return _call(db, github, conn, lambda token: github.view_repo(token, owner, name))
 
 
 def _call[T](

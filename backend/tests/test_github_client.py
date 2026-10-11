@@ -9,6 +9,8 @@ from app.features.integrations.github.client import (
     GitHubAuthError,
     GitHubClient,
     GitHubError,
+    GitHubNotFound,
+    GitHubRateLimited,
 )
 
 
@@ -161,3 +163,61 @@ def test_server_error_is_not_an_auth_error():
     with pytest.raises(GitHubError) as e:
         _client(handler).fetch_profile("tok")
     assert not isinstance(e.value, GitHubAuthError)
+
+
+def _repo_json(**extra):
+    return {
+        "full_name": "octo/hello",
+        "description": "Hi",
+        "html_url": "https://github.com/octo/hello",
+        "private": False,
+        "default_branch": "main",
+        "language": "Python",
+        "stargazers_count": 3,
+        "forks_count": 1,
+        **extra,
+    }
+
+
+def test_view_repo_lists_dirs_first_and_sends_no_token_when_anonymous():
+    def handler(request):
+        assert "Authorization" not in request.headers
+        if request.url.path == "/repos/octo/hello":
+            return httpx.Response(200, json=_repo_json())
+        assert request.url.path == "/repos/octo/hello/contents"
+        return httpx.Response(
+            200,
+            json=[
+                {"name": "README.md", "type": "file", "html_url": "u1"},
+                {"name": "src", "type": "dir", "html_url": "u2"},
+            ],
+        )
+
+    view = _client(handler).view_repo(None, "octo", "hello")
+    assert view.full_name == "octo/hello" and view.stars == 3
+    assert [f.name for f in view.files] == ["src", "README.md"]
+
+
+def test_view_repo_of_empty_repo_has_no_files():
+    def handler(request):
+        if request.url.path == "/repos/octo/hello":
+            return httpx.Response(200, json=_repo_json())
+        return httpx.Response(404, json={"message": "This repository is empty."})
+
+    assert _client(handler).view_repo("tok", "octo", "hello").files == []
+
+
+def test_view_repo_missing_raises_not_found():
+    def handler(request):
+        return httpx.Response(404, json={"message": "Not Found"})
+
+    with pytest.raises(GitHubNotFound):
+        _client(handler).view_repo(None, "octo", "nope")
+
+
+def test_rate_limit_raises_rate_limited():
+    def handler(request):
+        return httpx.Response(403, headers={"x-ratelimit-remaining": "0"})
+
+    with pytest.raises(GitHubRateLimited):
+        _client(handler).view_repo(None, "octo", "hello")

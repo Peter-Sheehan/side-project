@@ -228,6 +228,7 @@ What a user's token can reach is limited three ways: the App's permissions, the 
 
 1. Put the org App's ID and secret in `.env` as `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` (see [step 2](#2-get-the-org-github-app-credentials)), then run `docker compose up -d`.
 2. Sign in at <http://localhost:3000>, then open <http://localhost:3000/api/integrations/github/link> in the same browser. Approve the App on GitHub. You should land back on `/landing`, showing your GitHub username and repositories.
+3. If no repositories are listed, the App isn't installed anywhere you can see. Click **Install the GitHub App** (shown when `GITHUB_APP_SLUG` is set to the App's name from `github.com/apps/<slug>`), pick your account or the org, and choose the repos. The same button changes the repo selection later.
 
 Start the link from the same origin as the backend. A local frontend proxied to a remote backend fails with `invalid_state`, because the callback returns to the remote address.
 
@@ -243,6 +244,7 @@ The App lives under the org: <https://github.com/organizations/failed-to-fetch/s
 | Expire user authorization tokens | ticked |
 | Request user authorization (OAuth) during installation | unticked (installs would come back without our `state` and fail) |
 | Enable Device Flow | unticked |
+| Setup URL | `<PUBLIC_URL>/landing` of the main deployment, so users return after installing |
 | Webhook, Active | unticked |
 | Repository permissions | Contents: Read-only, Metadata: Read-only |
 | Where can this GitHub App be installed | Any account |

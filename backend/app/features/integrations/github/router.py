@@ -10,6 +10,8 @@ from app.features.integrations.github import service
 from app.features.integrations.github.client import (
     GitHubClient,
     GitHubError,
+    GitHubNotFound,
+    GitHubRateLimited,
     get_github_client,
 )
 
@@ -28,12 +30,38 @@ REVOKED = "GitHub access was revoked or expired. Link GitHub again."
 class GitHubLink(BaseModel):
     status: Literal["linked", "unlinked", "revoked"]
     login: str | None
+    # Where the user installs the App or changes which repos it can see.
+    # None when GITHUB_APP_SLUG isn't set.
+    install_url: str | None = None
+
+
+def _install_url() -> str | None:
+    slug = get_settings().github_app_slug
+    return f"https://github.com/apps/{slug}/installations/new" if slug else None
 
 
 class GitHubRepoOut(BaseModel):
     full_name: str
     private: bool
     html_url: str
+
+
+class RepoEntryOut(BaseModel):
+    name: str
+    type: str
+    html_url: str
+
+
+class RepoViewOut(BaseModel):
+    full_name: str
+    description: str | None
+    html_url: str
+    private: bool
+    default_branch: str
+    language: str | None
+    stars: int
+    forks: int
+    files: list[RepoEntryOut]
 
 
 def _redirect(path: str) -> RedirectResponse:
@@ -92,7 +120,9 @@ def read_github_link(user: CurrentUser, db: DbSession, github: GitHub) -> GitHub
         return GitHubLink(status="revoked", login=None)
     if conn is None:
         return GitHubLink(status="unlinked", login=None)
-    return GitHubLink(status="linked", login=conn.provider_login)
+    return GitHubLink(
+        status="linked", login=conn.provider_login, install_url=_install_url()
+    )
 
 
 @router.get(
@@ -114,6 +144,47 @@ def list_github_repos(
     if repos is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "GitHub is not linked.")
     return [GitHubRepoOut(**vars(r)) for r in repos]
+
+
+@router.get(
+    "/repos/view",
+    response_model=RepoViewOut,
+    responses={
+        404: {"description": "No such repo, or it's private."},
+        409: {"description": "GitHub access was revoked; link it again."},
+        422: {"description": "Not a GitHub repo URL."},
+        429: {"description": "GitHub's rate limit ran out."},
+    },
+)
+def view_github_repo(
+    user: CurrentUser, db: DbSession, github: GitHub, url: str
+) -> RepoViewOut:
+    """Details and top-level files of a repo, from its GitHub URL or "owner/name"."""
+    ref = service.parse_repo_ref(url)
+    if ref is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "Enter a GitHub repository URL, e.g. https://github.com/owner/repo",
+        )
+    try:
+        repo = service.view_repo(db, github, user.id, *ref)
+    except service.LinkRevoked as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, REVOKED) from e
+    except GitHubNotFound as e:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "Repository not found. Check the URL; private repos need access.",
+        ) from e
+    except GitHubRateLimited as e:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "GitHub's rate limit was reached. Link GitHub or try again later.",
+        ) from e
+    except GitHubError as e:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, "Couldn't reach GitHub."
+        ) from e
+    return RepoViewOut.model_validate(repo, from_attributes=True)
 
 
 @router.delete("", status_code=status.HTTP_204_NO_CONTENT)

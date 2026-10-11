@@ -26,6 +26,14 @@ class GitHubAuthError(GitHubError):
     refresh token expired. Only re-linking fixes it."""
 
 
+class GitHubNotFound(GitHubError):
+    """404: it doesn't exist, or the token can't see it."""
+
+
+class GitHubRateLimited(GitHubError):
+    """GitHub's rate limit for this token (or this IP, if anonymous) ran out."""
+
+
 @dataclass
 class TokenSet:
     access_token: str
@@ -44,6 +52,26 @@ class GitHubRepo:
     full_name: str  # "owner/name"
     private: bool
     html_url: str
+
+
+@dataclass
+class RepoEntry:
+    name: str
+    type: str  # "file", "dir", "symlink" or "submodule"
+    html_url: str
+
+
+@dataclass
+class RepoView:
+    full_name: str
+    description: str | None
+    html_url: str
+    private: bool
+    default_branch: str
+    language: str | None
+    stars: int
+    forks: int
+    files: list[RepoEntry]
 
 
 def make_pkce() -> tuple[str, str]:
@@ -126,20 +154,58 @@ class GitHubClient:
             expires_at = datetime.now(UTC) + timedelta(seconds=int(data["expires_in"]))
         return TokenSet(data["access_token"], data.get("refresh_token"), expires_at)
 
-    def _get(self, http: httpx.Client, token: str, path: str, **params) -> dict:
-        r = http.get(
-            f"{API_URL}{path}",
-            params=params,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-        )
+    def _get(self, http: httpx.Client, token: str | None, path: str, **params):
+        """GET an API path; token None makes an anonymous request (60 an hour
+        per IP, against 5,000 for a user token)."""
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        r = http.get(f"{API_URL}{path}", params=params, headers=headers)
         if r.status_code == 401:
             raise GitHubAuthError("GitHub rejected the token")
+        if r.status_code == 404:
+            raise GitHubNotFound(path)
+        if r.status_code == 429 or (
+            r.status_code == 403 and r.headers.get("x-ratelimit-remaining") == "0"
+        ):
+            raise GitHubRateLimited("GitHub rate limit reached")
         r.raise_for_status()
         return r.json()
+
+    def view_repo(self, token: str | None, owner: str, name: str) -> RepoView:
+        """A repo's details and top-level files. Raises GitHubNotFound if it
+        doesn't exist or this token can't see it (GitHub hides private repos
+        behind 404)."""
+        path = f"/repos/{owner}/{name}"
+        try:
+            with self._http() as http:
+                repo = self._get(http, token, path)
+                try:
+                    contents = self._get(http, token, f"{path}/contents")
+                except GitHubNotFound:
+                    contents = []  # an empty repo has no contents
+        except (httpx.HTTPError, ValueError, KeyError) as e:
+            raise GitHubError("repo lookup failed") from e
+        files = [
+            RepoEntry(name=c["name"], type=c["type"], html_url=c["html_url"])
+            for c in contents
+        ]
+        # Directories first, like GitHub's file list.
+        files.sort(key=lambda f: (f.type != "dir", f.name.lower()))
+        return RepoView(
+            full_name=repo["full_name"],
+            description=repo.get("description"),
+            html_url=repo["html_url"],
+            private=repo["private"],
+            default_branch=repo["default_branch"],
+            language=repo.get("language"),
+            stars=repo["stargazers_count"],
+            forks=repo["forks_count"],
+            files=files,
+        )
 
     def fetch_profile(self, token: str) -> GitHubProfile:
         try:

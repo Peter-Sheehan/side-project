@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
 
 import Header from "../components/header";
+import { RepoViewer } from "../components/repo-viewer";
 import { useAuth } from "../lib/auth-context";
 
 // The backend redirects to /landing?error=<reason> when linking fails.
@@ -15,7 +16,7 @@ const linkErrors: Record<string, string> = {
 
 type GitHubState =
     | { status: "loading" }
-    | { status: "linked"; login: string | null }
+    | { status: "linked"; login: string | null; installUrl: string | null }
     | { status: "unlinked" }
     | { status: "revoked" }
     | { status: "failed" };
@@ -32,7 +33,13 @@ type RepoState =
     | { status: "failed" };
 
 // Repos the linked account can reach through the GitHub App's installations.
-function RepoList({ onRevoked }: { onRevoked: () => void }) {
+function RepoList({
+    installUrl,
+    onRevoked,
+}: {
+    installUrl: string | null;
+    onRevoked: () => void;
+}) {
     const [state, setState] = useState<RepoState>({ status: "loading" });
 
     useEffect(() => {
@@ -92,6 +99,23 @@ function RepoList({ onRevoked }: { onRevoked: () => void }) {
                     ))}
                 </ul>
             )}
+
+            {/* GitHub's install page also lets users change the repos on an
+                existing install ("Configure"). */}
+            {state.status === "loaded" && installUrl && (
+                <a
+                    href={installUrl}
+                    className={
+                        state.repos.length === 0
+                            ? "mt-3 block w-full rounded-lg bg-primary px-4 py-3 text-center text-primary-foreground"
+                            : "mt-3 block w-full rounded-lg border px-4 py-2 text-center text-sm"
+                    }
+                >
+                    {state.repos.length === 0
+                        ? "Install the GitHub App"
+                        : "Add or change repositories"}
+                </a>
+            )}
         </div>
     );
 }
@@ -119,10 +143,11 @@ export default function SuccessPage() {
                 const data: {
                     status: "linked" | "unlinked" | "revoked";
                     login: string | null;
+                    install_url: string | null;
                 } = await res.json();
                 setGithub(
                     data.status === "linked"
-                        ? { status: "linked", login: data.login }
+                        ? { status: "linked", login: data.login, installUrl: data.install_url }
                         : { status: data.status },
                 );
             })
@@ -161,7 +186,10 @@ export default function SuccessPage() {
                                     </>
                                 )}
                             </p>
-                            <RepoList onRevoked={handleRevoked} />
+                            <RepoList
+                                installUrl={github.installUrl}
+                                onRevoked={handleRevoked}
+                            />
                         </>
                     ) : (
                         <>
@@ -189,10 +217,12 @@ export default function SuccessPage() {
                         </>
                     )}
 
+                    <RepoViewer onRevoked={handleRevoked} />
+
                     <button
                         type="button"
                         onClick={signOut}
-                        className="mt-3 w-full rounded-lg border px-4 py-3"
+                        className="mt-8 w-full rounded-lg border px-4 py-3"
                     >
                         Sign out
                     </button>
