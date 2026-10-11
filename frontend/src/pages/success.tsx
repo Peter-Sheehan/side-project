@@ -1,13 +1,10 @@
 import Header from "../components/header";
-type SuccessPageProps = {
-    email: string;
-    onSignOut: () => void;
-};
+import { useAuth } from "../lib/auth-context";
 
-export default function SuccessPage({
-    email,
-    onSignOut,
-}: SuccessPageProps) {
+export default function SuccessPage() {
+    const { session, signOut } = useAuth();
+    const email = session?.user.email ?? "";
+
     return (
         <>
             <Header />
@@ -28,7 +25,7 @@ export default function SuccessPage({
 
                     <button
                         type="button"
-                        onClick={onSignOut}
+                        onClick={signOut}
                         className="mt-8 w-full rounded-lg bg-primary px-4 py-3 text-primary-foreground"
                     >
                         Sign out
