@@ -1,18 +1,37 @@
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, status
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 
 from app.api.deps import CurrentUser, DbSession, RedisClient
 from app.core.config import get_settings
 from app.features.integrations.github import service
-from app.features.integrations.github.client import GitHubClient, get_github_client
+from app.features.integrations.github.client import (
+    GitHubClient,
+    GitHubError,
+    get_github_client,
+)
 
 # Connects a signed-in user's GitHub account for repository access.
 router = APIRouter(prefix="/integrations/github", tags=["github"])
 
 STATE_COOKIE = "oauth_state"
 GitHub = Annotated[GitHubClient, Depends(get_github_client)]
+
+
+REVOKED = "GitHub access was revoked or expired. Link GitHub again."
+
+
+class GitHubLink(BaseModel):
+    status: Literal["linked", "unlinked", "revoked"]
+    login: str | None
+
+
+class GitHubRepoOut(BaseModel):
+    full_name: str
+    private: bool
+    html_url: str
 
 
 def _redirect(path: str) -> RedirectResponse:
@@ -59,6 +78,40 @@ def github_callback(
     except service.LinkError as e:
         return _redirect(f"/settings?error={e.reason}")
     return _redirect("/settings?linked=github")
+
+
+@router.get("", response_model=GitHubLink)
+def read_github_link(user: CurrentUser, db: DbSession, github: GitHub) -> GitHubLink:
+    """Whether the user's GitHub is linked, checked against GitHub. "revoked"
+    means it was linked but GitHub stopped accepting it, so it was removed."""
+    try:
+        conn = service.check_link(db, github, user.id)
+    except service.LinkRevoked:
+        return GitHubLink(status="revoked", login=None)
+    if conn is None:
+        return GitHubLink(status="unlinked", login=None)
+    return GitHubLink(status="linked", login=conn.provider_login)
+
+
+@router.get(
+    "/repos",
+    response_model=list[GitHubRepoOut],
+    responses={409: {"description": "GitHub access was revoked; link it again."}},
+)
+def list_github_repos(
+    user: CurrentUser, db: DbSession, github: GitHub
+) -> list[GitHubRepoOut]:
+    try:
+        repos = service.list_repos(db, github, user.id)
+    except service.LinkRevoked as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, REVOKED) from e
+    except GitHubError as e:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, "Couldn't list repositories from GitHub."
+        ) from e
+    if repos is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "GitHub is not linked.")
+    return [GitHubRepoOut(**vars(r)) for r in repos]
 
 
 @router.delete("", status_code=status.HTTP_204_NO_CONTENT)

@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -5,8 +6,11 @@ from sqlalchemy import func, select
 
 from app.core.crypto import decrypt
 from app.features.integrations.github.client import (
+    GitHubAuthError,
     GitHubClient,
+    GitHubError,
     GitHubProfile,
+    GitHubRepo,
     TokenSet,
     get_github_client,
 )
@@ -18,12 +22,30 @@ class FakeGitHub(GitHubClient):
     def __init__(self):
         super().__init__("test-client", "test-secret", "http://test/callback")
         self.profile = GitHubProfile(id="4242", login="octocat")
+        self.listed_with: str | None = None
+        self.error: GitHubError | None = None  # raised by every call once set
+
+    def _maybe_fail(self):
+        if self.error:
+            raise self.error
 
     def exchange_code(self, code, code_verifier):
         return TokenSet("ghu_test", "ghr_test", None)
 
+    def refresh(self, refresh_token):
+        self._maybe_fail()
+        assert refresh_token == "ghr_test"
+        expires = datetime.now(UTC) + timedelta(hours=8)
+        return TokenSet("ghu_refreshed", "ghr_refreshed", expires)
+
     def fetch_profile(self, token):
+        self._maybe_fail()
         return self.profile
+
+    def list_repos(self, token):
+        self._maybe_fail()
+        self.listed_with = token
+        return [GitHubRepo("org/repo", True, "https://github.com/org/repo")]
 
 
 @pytest.fixture
@@ -137,3 +159,88 @@ def test_unlink_removes_connection(client, db, sign_in, fake_github):
     assert client.delete("/api/integrations/github").status_code == 204
     assert _connections(db, user_id="ba_alice") == 0
     assert client.delete("/api/integrations/github").status_code == 404
+
+
+def _status(client):
+    r = client.get("/api/integrations/github")
+    assert r.status_code == 200
+    return r.json()
+
+
+def _expire_token(db, user_id="ba_alice"):
+    conn = db.scalar(
+        select(ProviderConnection).where(ProviderConnection.user_id == user_id)
+    )
+    conn.token_expires_at = datetime.now(UTC) - timedelta(minutes=1)
+    db.commit()
+    return conn
+
+
+def test_read_link_returns_login(client, sign_in, fake_github):
+    sign_in("ba_alice")
+    assert _status(client) == {"status": "unlinked", "login": None}
+    _link(client)
+    assert _status(client) == {"status": "linked", "login": "octocat"}
+
+
+def test_read_link_picks_up_renamed_login(client, sign_in, fake_github):
+    sign_in("ba_alice")
+    _link(client)
+    fake_github.profile = GitHubProfile(id="4242", login="renamed")
+    assert _status(client)["login"] == "renamed"
+
+
+def test_revoked_token_removes_link(client, db, sign_in, fake_github):
+    sign_in("ba_alice")
+    _link(client)
+    fake_github.error = GitHubAuthError("revoked")
+    assert _status(client) == {"status": "revoked", "login": None}
+    assert _connections(db, user_id="ba_alice") == 0
+    fake_github.error = None
+    assert _status(client)["status"] == "unlinked"  # reported once, then gone
+
+
+def test_expired_refresh_token_removes_link(client, db, sign_in, fake_github):
+    sign_in("ba_alice")
+    _link(client)
+    _expire_token(db)
+    fake_github.error = GitHubAuthError("bad_refresh_token")
+    r = client.get("/api/integrations/github/repos")
+    assert r.status_code == 409
+    assert _connections(db, user_id="ba_alice") == 0
+
+
+def test_github_outage_keeps_link(client, db, sign_in, fake_github):
+    sign_in("ba_alice")
+    _link(client)
+    fake_github.error = GitHubError("down")
+    assert _status(client) == {"status": "linked", "login": "octocat"}
+    assert client.get("/api/integrations/github/repos").status_code == 502
+    assert _connections(db, user_id="ba_alice") == 1
+
+
+def test_list_repos(client, sign_in, fake_github):
+    sign_in("ba_alice")
+    assert client.get("/api/integrations/github/repos").status_code == 404
+    _link(client)
+    r = client.get("/api/integrations/github/repos")
+    assert r.status_code == 200
+    assert r.json() == [
+        {
+            "full_name": "org/repo",
+            "private": True,
+            "html_url": "https://github.com/org/repo",
+        }
+    ]
+    assert fake_github.listed_with == "ghu_test"
+
+
+def test_list_repos_refreshes_expired_token(client, db, sign_in, fake_github):
+    sign_in("ba_alice")
+    _link(client)
+    conn = _expire_token(db)
+
+    assert client.get("/api/integrations/github/repos").status_code == 200
+    assert fake_github.listed_with == "ghu_refreshed"
+    db.refresh(conn)
+    assert decrypt(conn.refresh_token_enc) == "ghr_refreshed"  # rotated token stored

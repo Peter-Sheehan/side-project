@@ -35,7 +35,7 @@ Signing in sets a `better-auth.session_token` cookie. When the backend gets a re
 - **Git**
 - **Docker** with Compose v2 (`docker compose`, not the older `docker-compose`): Docker Desktop on Windows and macOS, or Docker Engine plus the Compose plugin on Linux
 - **A bash shell** for the scripts in `scripts/`. On Windows use **Git Bash** (installed with Git for Windows), not PowerShell
-- **A GitHub account**, to create the OAuth App used for sign-in
+- **A GitHub account**, and the client ID and secret of the org's shared GitHub App (ask an org admin)
 
 You don't need Python, Node or uv installed. They run inside the containers.
 
@@ -50,19 +50,11 @@ git clone git@github.com:failed-to-fetch/side-project.git
 cd side-project
 ```
 
-### 2. Create a GitHub OAuth App for sign-in
+### 2. Get the org GitHub App credentials
 
-The auth service won't start without one. Each developer creates their own, because the callback URL points at `localhost`. Never share client secrets.
+Everyone uses one GitHub App owned by the org; don't create your own. Ask an org admin for its **Client ID** (starts with `Iv`) and a **client secret**. The App can hold several secrets, so admins can generate one per developer and revoke it without affecting anyone else. Never commit or paste secrets in chat.
 
-Go to <https://github.com/settings/applications/new> (Settings, Developer settings, OAuth Apps, New OAuth App):
-
-| Field | Value |
-|---|---|
-| Application name | anything, e.g. `yourname-side-project-dev` |
-| Homepage URL | `http://localhost:3000` |
-| Authorization callback URL | `http://localhost:3000/api/auth/callback/github` |
-
-Click **Register application**, then **Generate a new client secret**. Keep the page open: you need the Client ID and the secret in the next step, and GitHub shows the secret only once.
+The auth service won't start without these. Users link their own GitHub account later by authorizing the App (see [GitHub App for repo access](#github-app-for-repo-access)).
 
 ### 3. Create your `.env`
 
@@ -72,11 +64,13 @@ scripts/setup.sh
 
 This creates `.env` from `.env.example` and generates the secrets (`TOKEN_ENCRYPTION_KEY`, `BETTER_AUTH_SECRET`, `POSTGRES_PASSWORD`). Then it lists what you still need to fill in.
 
-Open `.env` and set the two values from step 2:
+Open `.env` and set the values from step 2. Both pairs take the same ID and secret:
 
 ```dotenv
-GITHUB_LOGIN_CLIENT_ID=Ov23liXXXXXXXXXXXXXX
+GITHUB_LOGIN_CLIENT_ID=Iv23liXXXXXXXXXXXXXX
 GITHUB_LOGIN_CLIENT_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+GITHUB_CLIENT_ID=Iv23liXXXXXXXXXXXXXX
+GITHUB_CLIENT_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
 No quotes, no spaces around `=`. `.env` is git-ignored; never commit it. Back up `TOKEN_ENCRYPTION_KEY`: if it's lost, stored tokens can't be decrypted and users have to re-link GitHub.
@@ -117,12 +111,7 @@ scripts/setup.sh                 # adds any new .env values
 docker compose up -d --build     # rebuilds images and re-runs migrations
 ```
 
-**Update your GitHub callback URLs.** Everything is now served from port 3000 under `/api`:
-
-| Registration | New callback URL |
-|---|---|
-| OAuth App (sign-in) | `http://localhost:3000/api/auth/callback/github` (was port 3001) |
-| GitHub App (repo access), if you made one | `http://localhost:3000/api/integrations/github/callback` (was `localhost:8000/auth/github/callback`) |
+**Switch to the org GitHub App.** Personal OAuth Apps and GitHub Apps are no longer used. Replace `GITHUB_LOGIN_CLIENT_*` and `GITHUB_CLIENT_*` in `.env` with the org App's ID and secret (see [step 2](#2-get-the-org-github-app-credentials)), run `docker compose up -d`, then unlink and re-link GitHub: tokens from your old app don't work with the new one. You can delete your personal apps afterwards.
 
 ## Everyday development
 
@@ -229,31 +218,44 @@ docker compose exec postgres psql -U app -d appdb -c "ALTER USER app PASSWORD 't
 docker compose up -d
 ```
 
-## GitHub App for repo access (optional)
+## GitHub App for repo access
 
-This is separate from the OAuth App used for sign-in. A GitHub **App** lets the backend read a user's repositories. Without one, everything else works and linking returns 503.
+The org owns one GitHub App that every environment uses. A user clicks "Connect GitHub", authorizes the App with their own GitHub account, and the backend stores that user's token (encrypted) to call the GitHub API on their behalf. Without the App's credentials, everything else works and linking returns 503.
 
-1. Go to <https://github.com/settings/apps/new> and fill in:
+What a user's token can reach is limited three ways: the App's permissions, the user's own access, and the accounts where the App is **installed**. Authorizing isn't installing: to reach repos in their personal account, a user also installs the App there from its public page. Users can't choose scopes; they choose which repos the install covers.
 
-   | Field | Value |
-   |---|---|
-   | GitHub App name | anything unique, e.g. `yourname-side-project-dev` |
-   | Homepage URL | `http://localhost:3000` |
-   | Callback URL | `http://localhost:3000/api/integrations/github/callback` |
-   | Expire user authorization tokens | ticked |
-   | Webhook, Active | unticked |
-   | Repository permissions | Contents: Read-only, Metadata: Read-only |
-   | Where can this GitHub App be installed | Only on this account |
+### Linking your account
 
-2. Click **Create GitHub App**. Copy the **Client ID** (starts with `Iv`, not the numeric App ID), then **Generate a new client secret**.
-3. Add both to `.env` as `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`, then run `docker compose up -d`.
-4. Sign in at <http://localhost:3000>, then open <http://localhost:3000/api/integrations/github/link> in the same browser. You should land on `/settings?linked=github`.
+1. Put the org App's ID and secret in `.env` as `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` (see [step 2](#2-get-the-org-github-app-credentials)), then run `docker compose up -d`.
+2. Sign in at <http://localhost:3000>, then open <http://localhost:3000/api/integrations/github/link> in the same browser. Approve the App on GitHub. You should land on `/settings?linked=github`.
+
+Start the link from the same origin as the backend. A local frontend proxied to a remote backend fails with `invalid_state`, because the callback returns to the remote address.
+
+### App settings (org admins)
+
+The App lives under the org: <https://github.com/organizations/failed-to-fetch/settings/apps>.
+
+| Field | Value |
+|---|---|
+| Homepage URL | the production frontend URL |
+| Redirect URIs | `<PUBLIC_URL>/api/integrations/github/callback` for every deployment, including `http://localhost:3000/...` (up to 10) |
+| Allow wildcard matching | unticked |
+| Expire user authorization tokens | ticked |
+| Request user authorization (OAuth) during installation | unticked (installs would come back without our `state` and fail) |
+| Enable Device Flow | unticked |
+| Webhook, Active | unticked |
+| Repository permissions | Contents: Read-only, Metadata: Read-only |
+| Where can this GitHub App be installed | Any account |
+
+The same App's ID and secret also fill `GITHUB_LOGIN_CLIENT_*`, which the auth service requires. The login page doesn't offer "Sign in with GitHub" yet; if it's turned on, add `<PUBLIC_URL>/api/auth/callback/github` to the redirect URIs and set **Account permissions, Email addresses** to Read-only.
+
+To add a deployment, add its callback URL to the redirect URIs. To give a developer access, **Generate a new client secret** for them; revoke it when they leave.
 
 If it fails, the redirect ends in `?error=<reason>`:
 
 | Reason | Fix |
 |---|---|
-| `github_error` | Wrong client secret, or the callback URL isn't exactly `http://localhost:3000/api/integrations/github/callback` |
+| `github_error` | Wrong client secret (or it was revoked), or `<PUBLIC_URL>/api/integrations/github/callback` isn't in the App's redirect URIs |
 | `already_linked` | That GitHub account is linked to a different user |
 | `invalid_state`, `expired_state` | Took over 10 minutes, or the cookie was lost. Start again in the same browser |
 | `github_denied` | You cancelled on GitHub |
@@ -288,7 +290,7 @@ The same compose file runs on a Linux VM for testing. Everything is reached thro
    PUBLIC_URL=http://203.0.113.10:3000      # your VM's IP or hostname
    ```
    To serve on port 80 instead, also set `FRONTEND_PORT=80` and drop `:3000` from `PUBLIC_URL`.
-3. **Register callback URLs for that address.** A GitHub OAuth App has only one callback URL, so create a second OAuth App for the VM with `<PUBLIC_URL>/api/auth/callback/github`, and put its ID and secret in the VM's `.env`. A GitHub App accepts several callback URLs, so you can add `<PUBLIC_URL>/api/integrations/github/callback` to your existing one.
+3. **Register the callback URL for that address.** Ask an org admin to add `<PUBLIC_URL>/api/integrations/github/callback` to the org GitHub App's redirect URIs, and put the App's ID and secret in the VM's `.env`.
 4. Allow the port in your cloud provider's firewall or security group (inbound TCP 3000, or 80).
 5. Start it with `scripts/setup.sh --up`.
 
@@ -418,7 +420,7 @@ Start with `docker compose ps -a` and `docker compose logs <service> --tail 60`.
 | Backend logs `validation error for Settings` | A `.env` value is missing or malformed; the error names it. Run `scripts/setup.sh`, then `docker compose up -d` |
 | `password authentication failed for user "app"` | `POSTGRES_PASSWORD` in `.env` doesn't match the one the database was created with. See [Reset or change the database](#reset-or-change-the-database) |
 | `{"detail":"Authentication service unavailable."}` | `auth` is down: `docker compose logs auth --tail 60` |
-| `{"detail":"GitHub is not configured."}` | The optional repo-access GitHub App isn't set up. See [GitHub App for repo access](#github-app-for-repo-access-optional) |
+| `{"detail":"GitHub is not configured."}` | The optional repo-access GitHub App isn't set up. See [GitHub App for repo access](#github-app-for-repo-access) |
 | `relation "..." does not exist` | Migrations didn't run: `docker compose up -d`, then check `backend-migrate` |
 | `Bind for 0.0.0.0:3000 failed: port is already allocated` | Something else uses that port. Stop it, or set `FRONTEND_PORT` (and `PUBLIC_URL` to match) in `.env` |
 | Sign-in fails with 403 `Invalid origin` | The page's origin isn't trusted: it must be `PUBLIC_URL` or listed in `TRUSTED_ORIGINS` |

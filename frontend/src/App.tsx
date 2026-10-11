@@ -3,6 +3,9 @@ import { authClient } from "@/lib/auth-client";
 import LoginPage from "./pages/login";
 import SuccessPage from "@/pages/success";
 
+// Matches the auth service's session.updateAge: renewing more often is a no-op.
+const RENEW_INTERVAL_MS = 5 * 60 * 1000;
+
 type Session = {
   user: {
     email: string;
@@ -30,6 +33,26 @@ export default function App() {
   useEffect(() => {
     refreshSession().finally(() => setLoading(false));
   }, [refreshSession]);
+
+  // Sessions expire after 30 idle minutes (see services/auth/src/auth.ts).
+  // While the user is active, renew at most every RENEW_INTERVAL_MS; if the
+  // session has already expired, refreshSession clears it and shows the login.
+  const signedIn = !!session?.user;
+  useEffect(() => {
+    if (!signedIn) return;
+
+    let lastRenew = Date.now();
+    const onActivity = () => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastRenew < RENEW_INTERVAL_MS) return;
+      lastRenew = Date.now();
+      void refreshSession();
+    };
+
+    const events = ["pointerdown", "keydown", "visibilitychange"] as const;
+    events.forEach((e) => document.addEventListener(e, onActivity));
+    return () => events.forEach((e) => document.removeEventListener(e, onActivity));
+  }, [signedIn, refreshSession]);
 
   async function handleSignOut() {
     const { error } = await authClient.signOut();

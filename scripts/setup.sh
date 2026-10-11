@@ -166,7 +166,7 @@ done
 if [[ -n $missing ]]; then
   echo
   echo "Required, fill in .env:$missing"
-  echo "  (GitHub OAuth App for sign-in; see the comments in .env)"
+  echo "  (the org's GitHub App; ask an org admin, see the comments in .env)"
 fi
 if [[ -n $optional ]]; then
   echo "Optional, empty:$optional (repo linking stays disabled until set)"

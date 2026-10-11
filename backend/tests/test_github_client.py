@@ -5,7 +5,11 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 import pytest
 
-from app.features.integrations.github.client import GitHubClient, GitHubError
+from app.features.integrations.github.client import (
+    GitHubAuthError,
+    GitHubClient,
+    GitHubError,
+)
 
 
 def _client(handler) -> GitHubClient:
@@ -74,3 +78,86 @@ def test_fetch_profile_uses_numeric_id_as_string():
 
     profile = _client(handler).fetch_profile("tok")
     assert profile.id == "4242" and profile.login == "octocat"
+
+
+def test_refresh_sends_refresh_grant():
+    def handler(request):
+        body = parse_qs(request.content.decode())
+        assert body["grant_type"] == ["refresh_token"]
+        assert body["refresh_token"] == ["ghr_old"]
+        return httpx.Response(
+            200,
+            json={
+                "access_token": "ghu_new",
+                "refresh_token": "ghr_new",
+                "expires_in": 60,
+            },
+        )
+
+    tokens = _client(handler).refresh("ghr_old")
+    assert tokens.access_token == "ghu_new" and tokens.refresh_token == "ghr_new"
+
+
+def test_list_repos_covers_every_installation_and_dedupes():
+    def repo(id, name, private=False):
+        return {
+            "id": id,
+            "full_name": name,
+            "private": private,
+            "html_url": f"https://github.com/{name}",
+        }
+
+    def handler(request):
+        assert request.headers["Authorization"] == "Bearer tok"
+        if request.url.path == "/user/installations":
+            return httpx.Response(
+                200, json={"total_count": 2, "installations": [{"id": 1}, {"id": 2}]}
+            )
+        if request.url.path == "/user/installations/1/repositories":
+            return httpx.Response(
+                200,
+                json={
+                    "total_count": 2,
+                    "repositories": [repo(10, "org/b"), repo(11, "org/A", True)],
+                },
+            )
+        return httpx.Response(
+            200, json={"total_count": 1, "repositories": [repo(10, "org/b")]}
+        )
+
+    repos = _client(handler).list_repos("tok")
+    assert [r.full_name for r in repos] == ["org/A", "org/b"]
+    assert repos[0].private is True
+
+
+def test_list_repos_raises_on_revoked_token():
+    def handler(request):
+        return httpx.Response(401, json={"message": "Bad credentials"})
+
+    with pytest.raises(GitHubError):
+        _client(handler).list_repos("tok")
+
+
+def test_401_raises_auth_error():
+    def handler(request):
+        return httpx.Response(401, json={"message": "Bad credentials"})
+
+    with pytest.raises(GitHubAuthError):
+        _client(handler).fetch_profile("tok")
+
+
+def test_bad_refresh_token_raises_auth_error():
+    def handler(request):
+        return httpx.Response(200, json={"error": "bad_refresh_token"})
+
+    with pytest.raises(GitHubAuthError):
+        _client(handler).refresh("ghr_old")
+
+
+def test_server_error_is_not_an_auth_error():
+    def handler(request):
+        return httpx.Response(500)
+
+    with pytest.raises(GitHubError) as e:
+        _client(handler).fetch_profile("tok")
+    assert not isinstance(e.value, GitHubAuthError)
