@@ -169,7 +169,7 @@ Then `pnpm dev` and open <http://localhost:5173>. The terminal shows `[api proxy
 
 | Script | What it does |
 |---|---|
-| `scripts/setup.sh [--up]` | Creates `.env` and generates its secrets. Never overwrites values you've set. `--up` also starts everything |
+| `scripts/setup.sh [--up\|--fresh]` | Creates `.env` and generates its secrets. Never overwrites values you've set. `--up` also starts everything. `--fresh` deletes the local database, generates a new `POSTGRES_PASSWORD` and starts everything (asks you to type `reset` first) |
 | `scripts/check.sh [--fix]` | Lint, format check, migration check, backend tests. `--fix` applies formatting first |
 | `scripts/new-migration.sh "msg"` | Generates an Alembic migration from model changes |
 | `scripts/reset-db.sh` | Deletes the local database and starts fresh. Asks you to type `reset` first |
@@ -220,7 +220,7 @@ docker compose run --rm backend alembic downgrade -1    # roll back one; can des
 
 ### Reset or change the database
 
-`scripts/reset-db.sh` deletes all local data (users, sessions, linked accounts) and starts fresh. Use it only on a development machine, and never to work around a broken migration on data you care about.
+`scripts/reset-db.sh` deletes all local data (users, sessions, linked accounts) and starts fresh. `scripts/setup.sh --fresh` does the same and also replaces `POSTGRES_PASSWORD` with a newly generated one. Use either only on a development machine, and never to work around a broken migration on data you care about.
 
 Postgres only reads `POSTGRES_PASSWORD` when its volume is first created. To change the password and keep your data, set the new value in `.env`, then:
 
