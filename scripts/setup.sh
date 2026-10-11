@@ -2,19 +2,24 @@
 # First-time setup: creates .env, generates its secrets, optionally starts everything.
 # Safe to re-run: it never overwrites a value you've set.
 #   scripts/setup.sh        set up .env only
-#   scripts/setup.sh --up   also build and start the stack
+#   scripts/setup.sh --up     also build and start the stack
+#   scripts/setup.sh --fresh  delete the local database, generate a new POSTGRES_PASSWORD
+#                             and start the stack (development only, asks first)
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 ENV_FILE=.env
 
 start=false
-case "${1:-}" in
-  "") ;;
-  --up) start=true ;;
-  -h|--help) sed -n '2,5p' "$0"; exit 0 ;;
-  *) echo "Unknown option: $1 (try --help)" >&2; exit 2 ;;
-esac
+fresh=false
+for arg in "$@"; do
+  case "$arg" in
+    --up) start=true ;;
+    --fresh) fresh=true; start=true ;;
+    -h|--help) sed -n '2,7p' "$0"; exit 0 ;;
+    *) echo "Unknown option: $arg (try --help)" >&2; exit 2 ;;
+  esac
+done
 
 command -v docker >/dev/null 2>&1 || {
   echo "Error: Docker is not installed (Docker Desktop on Windows/macOS, Docker Engine on Linux)." >&2
@@ -78,6 +83,9 @@ fill() {
   fi
 }
 
+project=$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')
+volume="${COMPOSE_PROJECT_NAME:-$project}_postgres-data"
+
 # --- .env --------------------------------------------------------------------
 
 if [[ ! -f $ENV_FILE ]]; then
@@ -99,18 +107,36 @@ for key in $(grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' "$ENV_FILE" | sort | uniq -d | 
   echo "Merged duplicate $key lines in .env"
 done
 
+if $fresh; then
+  echo "--fresh permanently deletes the local database ($volume):"
+  echo "all users, sessions and linked accounts. Redis is kept."
+  read -r -p 'Type "reset" to continue: ' answer
+  if [[ $answer != reset ]]; then
+    echo "Cancelled."
+    exit 1
+  fi
+  docker compose down  # containers must be gone before their volume can be removed
+  if docker volume inspect "$volume" >/dev/null 2>&1; then
+    docker volume rm "$volume" >/dev/null
+    echo "Deleted $volume"
+  fi
+  set_value POSTGRES_PASSWORD ""  # so a new one is generated below
+fi
+
 fill TOKEN_ENCRYPTION_KEY fernet_key
 fill BETTER_AUTH_SECRET random_b64 32
 
 # Postgres only reads POSTGRES_PASSWORD when its volume is first created, so a
 # new password for an existing volume would lock everything out of the database.
-project=$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')
-volume="${COMPOSE_PROJECT_NAME:-$project}_postgres-data"
+# A volume created while POSTGRES_PASSWORD was unset (including every one from before
+# it moved to .env) has compose's default "password", so pin that rather than leave a
+# placeholder that compose would send as the real password.
 if [[ -z $(get POSTGRES_PASSWORD) ]] && docker volume inspect "$volume" >/dev/null 2>&1; then
+  set_value POSTGRES_PASSWORD password
   echo
-  echo "Note: POSTGRES_PASSWORD is empty or a placeholder, but the database ($volume)"
-  echo "      already exists with its own password, so it was left unchanged."
-  echo "      To switch to a generated password: scripts/reset-db.sh (deletes local data),"
+  echo "Note: the database ($volume) already exists, so POSTGRES_PASSWORD was set to"
+  echo "      \"password\", the default it was created with, instead of a generated one."
+  echo "      To switch to a generated password: scripts/setup.sh --fresh (deletes local data),"
   echo "      or ALTER USER as described in README.md."
 else
   fill POSTGRES_PASSWORD random_hex 24

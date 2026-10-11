@@ -36,6 +36,11 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
+      // Caddy serves the API on this origin, so keep the SPA fallback off /api
+      // (otherwise navigating to /api/docs gets index.html from the service worker)
+      workbox: {
+        navigateFallbackDenylist: [/^\/api\//],
+      },
       includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
       manifest: {
         // TODO: replace placeholder name and colours
