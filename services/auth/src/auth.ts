@@ -155,6 +155,15 @@ export const auth = betterAuth({
         enabled: true,
     },
 
+    // Sessions end after 30 minutes without activity. GET /api/auth/get-session
+    // renews one (new expiry in the DB, new cookie) once it's over 5 minutes old;
+    // the frontend calls it while the user is active. The backend's own lookups
+    // pass disableRefresh, so API calls alone don't keep a session alive.
+    session: {
+        expiresIn: 60 * 30,
+        updateAge: 60 * 5,
+    },
+
     socialProviders: {
         github: {
             clientId: requiredEnv("GITHUB_LOGIN_CLIENT_ID"),

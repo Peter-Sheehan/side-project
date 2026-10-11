@@ -2,17 +2,23 @@
 callers pass in a DB session, Redis and a GitHubClient."""
 
 import json
+import re
 import secrets
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 
 import redis
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.crypto import encrypt
+from app.core.crypto import decrypt, encrypt
 from app.features.integrations.github.client import (
+    GitHubAuthError,
     GitHubClient,
     GitHubError,
+    GitHubRepo,
+    RepoView,
     TokenSet,
     make_pkce,
 )
@@ -20,6 +26,7 @@ from app.features.integrations.models import ProviderConnection
 
 PROVIDER = "github"
 STATE_TTL_SECONDS = 600
+REFRESH_MARGIN = timedelta(minutes=5)  # refresh tokens this close to expiry
 
 
 class LinkError(Exception):
@@ -96,6 +103,104 @@ def complete_link(
         db.rollback()
         raise LinkError("already_linked") from e
     return conn
+
+
+class LinkRevoked(Exception):
+    """GitHub stopped accepting the user's tokens, so the link was removed.
+    The user has to link GitHub again."""
+
+
+def check_link(
+    db: Session, github: GitHubClient, user_id: str
+) -> ProviderConnection | None:
+    """The user's GitHub connection after confirming GitHub still accepts it,
+    or None if they haven't linked one. Raises LinkRevoked.
+
+    If GitHub can't be reached, the stored connection is returned unverified:
+    an outage shouldn't look like the user unlinked."""
+    conn = _get_connection(db, user_id)
+    if conn is None:
+        return None
+    try:
+        profile = _call(db, github, conn, github.fetch_profile)
+    except GitHubError:
+        return conn
+    if profile.login != conn.provider_login:  # renamed on GitHub
+        conn.provider_login = profile.login
+        db.commit()
+    return conn
+
+
+def list_repos(
+    db: Session, github: GitHubClient, user_id: str
+) -> list[GitHubRepo] | None:
+    """Repos the user's linked account can reach, or None if not linked.
+    Raises LinkRevoked, or GitHubError if GitHub fails."""
+    conn = _get_connection(db, user_id)
+    if conn is None:
+        return None
+    return _call(db, github, conn, github.list_repos)
+
+
+# github.com/<owner>/<repo>[.git][/anything], with or without scheme or "www.",
+# or just <owner>/<repo>. Owner names are letters, digits and single hyphens.
+_REPO_REF = re.compile(
+    r"^(?:(?:https?://)?(?:www\.)?github\.com/)?"
+    r"(?P<owner>[A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))/"
+    r"(?P<name>[A-Za-z0-9._-]{1,100}?)(?:\.git)?(?:[/?#].*)?$"
+)
+
+
+def parse_repo_ref(text: str) -> tuple[str, str] | None:
+    """(owner, name) from a GitHub repo URL or "owner/name", else None."""
+    m = _REPO_REF.match(text.strip())
+    if m is None or m["name"] in (".", ".."):
+        return None
+    return m["owner"], m["name"]
+
+
+def view_repo(
+    db: Session, github: GitHubClient, user_id: str, owner: str, name: str
+) -> RepoView:
+    """Look up a repo, with the user's token if they've linked GitHub (higher
+    rate limit, and their private repos too) or anonymously if not.
+    Raises LinkRevoked, GitHubNotFound or GitHubError."""
+    conn = _get_connection(db, user_id)
+    if conn is None:
+        return github.view_repo(None, owner, name)
+    return _call(db, github, conn, lambda token: github.view_repo(token, owner, name))
+
+
+def _call[T](
+    db: Session,
+    github: GitHubClient,
+    conn: ProviderConnection,
+    fn: Callable[[str], T],
+) -> T:
+    """Run fn with a valid access token. If GitHub rejects the grant, delete the
+    connection (its tokens are dead) and raise LinkRevoked."""
+    try:
+        return fn(_access_token(db, github, conn))
+    except GitHubAuthError as e:
+        db.rollback()
+        db.delete(conn)
+        db.commit()
+        raise LinkRevoked from e
+
+
+def _access_token(db: Session, github: GitHubClient, conn: ProviderConnection) -> str:
+    """The stored access token, refreshed first if it has expired or is about to."""
+    expires_soon = conn.token_expires_at is not None and (
+        conn.token_expires_at <= datetime.now(UTC) + REFRESH_MARGIN
+    )
+    if not expires_soon:
+        return decrypt(conn.access_token_enc)
+    if not conn.refresh_token_enc:
+        raise GitHubAuthError("token expired and can't be refreshed")
+    tokens = github.refresh(decrypt(conn.refresh_token_enc))
+    _store_tokens(conn, tokens, conn.provider_login)
+    db.commit()
+    return tokens.access_token
 
 
 def unlink(db: Session, user_id: str) -> bool:
