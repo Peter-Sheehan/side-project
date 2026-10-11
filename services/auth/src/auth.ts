@@ -153,6 +153,9 @@ export const auth = betterAuth({
 
     emailAndPassword: {
         enabled: true,
+        // Sign-up only creates the account; the user then signs in on the
+        // sign-in card. Without this, sign-up also starts a session.
+        autoSignIn: false,
     },
 
     // Sessions end after 30 minutes without activity. GET /api/auth/get-session
