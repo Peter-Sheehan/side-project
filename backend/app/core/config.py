@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     github_client_id: str = ""
     github_client_secret: SecretStr = SecretStr("")
     github_redirect_uri: str = "http://localhost:3000/api/integrations/github/callback"
+    # The App's URL name (github.com/apps/<slug>), for the "install the App" link.
+    github_app_slug: str = ""
 
     auth_service_url: str = "http://auth:3001"  # Better Auth owns sign-in
     auth_session_cache_seconds: int = 60  # How long a checked session is cached

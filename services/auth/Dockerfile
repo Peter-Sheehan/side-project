@@ -5,12 +5,13 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
 FROM base AS build
 RUN pnpm install --frozen-lockfile
-COPY tsconfig.json ./
+COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
 RUN pnpm run build
 
 FROM build AS migrate
-CMD ["pnpm", "run", "auth:migrate:docker"]
+# Migrate, then create the dev account if SEED_DEV_ACCOUNT=true (see src/seed.ts).
+CMD ["sh", "-c", "pnpm run auth:migrate:docker && node dist/seed.js"]
 
 FROM base AS prod
 ENV NODE_ENV=production

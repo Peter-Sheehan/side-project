@@ -1,63 +1,24 @@
-import { useCallback, useEffect, useState } from "react";
-import { authClient } from "@/lib/auth-client";
-import LoginPage from "./pages/login";
+import { Navigate, Route, Routes } from "react-router";
+
+import { RequireAuth, RequireGuest } from "@/components/route-guards";
+import LoginPage from "@/pages/login";
+import SettingsPage from "@/pages/settings";
 import SuccessPage from "@/pages/success";
 
-type Session = {
-  user: {
-    email: string;
-    name: string;
-  };
-};
-
 export default function App() {
-  const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
+  return (
+    <Routes>
+      <Route element={<RequireGuest redirectTo="/landing" />}>
+        <Route path="/login" element={<LoginPage />} />
+      </Route>
 
-  const refreshSession = useCallback(async () => {
-    const { data, error } = await authClient.getSession();
+      <Route element={<RequireAuth redirectTo="/login" />}>
+        <Route path="/landing" element={<SuccessPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
+      </Route>
 
-    if (error) {
-      console.error("Failed to get session:", error);
-      setSession(null);
-      return false;
-    }
-
-    setSession(data as Session | null);
-    return !!data?.user;
-  }, []);
-
-  useEffect(() => {
-    refreshSession().finally(() => setLoading(false));
-  }, [refreshSession]);
-
-  async function handleSignOut() {
-    const { error } = await authClient.signOut();
-
-    if (error) {
-      console.error("Sign-out failed:", error);
-      return;
-    }
-
-    setSession(null);
-  }
-
-  if (loading) {
-    return (
-      <main className="flex min-h-svh items-center justify-center">
-        Checking your session...
-      </main>
-    );
-  }
-
-  if (session?.user) {
-    return (
-      <SuccessPage
-        email={session.user.email}
-        onSignOut={handleSignOut}
-      />
-    );
-  }
-
-  return <LoginPage onSignIn={refreshSession} />;
+      {/* RequireAuth bounces signed-out users on to /login */}
+      <Route path="*" element={<Navigate to="/landing" replace />} />
+    </Routes>
+  );
 }

@@ -1,6 +1,16 @@
 import { betterAuth } from "better-auth";
 import { Pool } from "pg";
 import { genericOAuth } from "better-auth/plugins";
+import {
+    existingAccountEmail,
+    resetPasswordEmail,
+    sendEmail,
+    signUpCodeEmail,
+    verificationEmail,
+    type Email,
+} from "./mailer.js";
+import { accountRules } from "./account-rules.js";
+import { signUpCode } from "./sign-up-code.js";
 
 const requiredEnv = (name: string): string => {
     const value = process.env[name];
@@ -34,6 +44,23 @@ const publicOrigin = (() => {
     }
     return url.origin;
 })();
+
+// A failed send is logged, not thrown: sign-up must answer the same way whether
+// or not the email was already registered, and an unverified user can get a
+// new link by signing in.
+async function sendSafely(email: Email): Promise<void> {
+    try {
+        await sendEmail(email);
+    } catch (err) {
+        console.error(`[mail] couldn't send "${email.subject}" to ${email.to}:`, err);
+    }
+}
+
+// Per address, so reset emails can't be used to flood an inbox from many IPs.
+// In memory: fine for one auth instance.
+const RESET_EMAIL_COOLDOWN_MS = 60 * 1000;
+const lastResetEmail = new Map<string, number>();
+
 
 const pool = new Pool({
     connectionString: requiredEnv("DATABASE_URL"),
@@ -153,6 +180,41 @@ export const auth = betterAuth({
 
     emailAndPassword: {
         enabled: true,
+        autoSignIn: false,
+        // Mirrored in frontend/src/lib/sign-up-validation.ts, like account-rules.ts.
+        minPasswordLength: 8,
+        maxPasswordLength: 128,
+        requireEmailVerification: true,
+        resetPasswordTokenExpiresIn: 60 * 60,
+        revokeSessionsOnPasswordReset: true,
+        sendResetPassword: async ({ user, url }) => {
+            const last = lastResetEmail.get(user.email) ?? 0;
+            if (Date.now() - last < RESET_EMAIL_COOLDOWN_MS) return;
+            lastResetEmail.set(user.email, Date.now());
+            await sendSafely(resetPasswordEmail(user.email, user.name, url));
+        },
+    },
+
+    emailVerification: {
+        sendOnSignUp: false,
+        sendOnSignIn: true,
+        // Redirects to the frontend's callbackURL (/login), which forwards
+        // signed-in users on.
+        autoSignInAfterVerification: true,
+        expiresIn: 60 * 60,
+        sendVerificationEmail: async ({ user, url }) => {
+            await sendSafely(verificationEmail(user.email, user.name, url));
+        },
+    },
+
+
+    // Sessions end after 30 minutes without activity. GET /api/auth/get-session
+    // renews one (new expiry in the DB, new cookie) once it's over 5 minutes old;
+    // the frontend calls it while the user is active. The backend's own lookups
+    // pass disableRefresh, so API calls alone don't keep a session alive.
+    session: {
+        expiresIn: 60 * 30,
+        updateAge: 60 * 5,
     },
 
     socialProviders: {
@@ -170,6 +232,12 @@ export const auth = betterAuth({
     },
 
     plugins: [
+        accountRules(),
+        signUpCode({
+            sendCode: (email, code) => sendSafely(signUpCodeEmail(email, code)),
+            sendExistingAccount: (user) =>
+                sendSafely(existingAccountEmail(user.email, user.name, `${publicOrigin}/login`)),
+        }),
         ...(genericProviders.length > 0
             ? [
                 genericOAuth({

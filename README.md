@@ -35,7 +35,7 @@ Signing in sets a `better-auth.session_token` cookie. When the backend gets a re
 - **Git**
 - **Docker** with Compose v2 (`docker compose`, not the older `docker-compose`): Docker Desktop on Windows and macOS, or Docker Engine plus the Compose plugin on Linux
 - **A bash shell** for the scripts in `scripts/`. On Windows use **Git Bash** (installed with Git for Windows), not PowerShell
-- **A GitHub account**, to create the OAuth App used for sign-in
+- **A GitHub account**, and the client ID and secret of the org's shared GitHub App (ask an org admin)
 
 You don't need Python, Node or uv installed. They run inside the containers.
 
@@ -50,19 +50,11 @@ git clone git@github.com:failed-to-fetch/side-project.git
 cd side-project
 ```
 
-### 2. Create a GitHub OAuth App for sign-in
+### 2. Get the org GitHub App credentials
 
-The auth service won't start without one. Each developer creates their own, because the callback URL points at `localhost`. Never share client secrets.
+Everyone uses one GitHub App owned by the org; don't create your own. Ask an org admin for its **Client ID** (starts with `Iv`) and a **client secret**. The App can hold several secrets, so admins can generate one per developer and revoke it without affecting anyone else. Never commit or paste secrets in chat.
 
-Go to <https://github.com/settings/applications/new> (Settings, Developer settings, OAuth Apps, New OAuth App):
-
-| Field | Value |
-|---|---|
-| Application name | anything, e.g. `yourname-side-project-dev` |
-| Homepage URL | `http://localhost:3000` |
-| Authorization callback URL | `http://localhost:3000/api/auth/callback/github` |
-
-Click **Register application**, then **Generate a new client secret**. Keep the page open: you need the Client ID and the secret in the next step, and GitHub shows the secret only once.
+The auth service won't start without these. Users link their own GitHub account later by authorizing the App (see [GitHub App for repo access](#github-app-for-repo-access)).
 
 ### 3. Create your `.env`
 
@@ -72,11 +64,13 @@ scripts/setup.sh
 
 This creates `.env` from `.env.example` and generates the secrets (`TOKEN_ENCRYPTION_KEY`, `BETTER_AUTH_SECRET`, `POSTGRES_PASSWORD`). Then it lists what you still need to fill in.
 
-Open `.env` and set the two values from step 2:
+Open `.env` and set the values from step 2. Both pairs take the same ID and secret:
 
 ```dotenv
-GITHUB_LOGIN_CLIENT_ID=Ov23liXXXXXXXXXXXXXX
+GITHUB_LOGIN_CLIENT_ID=Iv23liXXXXXXXXXXXXXX
 GITHUB_LOGIN_CLIENT_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+GITHUB_CLIENT_ID=Iv23liXXXXXXXXXXXXXX
+GITHUB_CLIENT_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
 No quotes, no spaces around `=`. `.env` is git-ignored; never commit it. Back up `TOKEN_ENCRYPTION_KEY`: if it's lost, stored tokens can't be decrypted and users have to re-link GitHub.
@@ -97,7 +91,7 @@ docker compose ps -a
 
 `auth-migrate` and `backend-migrate` should show `Exited (0)`. Everything else should be `Up`, and `backend`, `postgres` and `redis` should be `(healthy)`.
 
-Then open <http://localhost:3000> and sign in. The backend API docs are at <http://localhost:3000/api/docs>.
+Then open <http://localhost:3000> and sign in as **dev@gmail.com** / **secret123**. This shared dev account is created on startup while `SEED_DEV_ACCOUNT=true` (the default in `.env.example`; if your `.env` predates it, add that line and run `docker compose up -d`). You can also create your own account. The backend API docs are at <http://localhost:3000/api/docs>.
 
 ### 6. Run the checks
 
@@ -105,7 +99,14 @@ Then open <http://localhost:3000> and sign in. The backend API docs are at <http
 scripts/check.sh
 ```
 
-This runs what CI runs: lint, a format check, a migration check and the backend tests. All should pass.
+This runs what CI runs for the backend: lint, a format check, a migration check and the backend tests. All should pass.
+
+The frontend and auth service have their own checks (run on your machine, with pnpm):
+
+```sh
+cd frontend && pnpm lint && pnpm typecheck && pnpm test
+cd services/auth && pnpm typecheck && pnpm test
+```
 
 ### Upgrading from an older checkout
 
@@ -117,12 +118,7 @@ scripts/setup.sh                 # adds any new .env values
 docker compose up -d --build     # rebuilds images and re-runs migrations
 ```
 
-**Update your GitHub callback URLs.** Everything is now served from port 3000 under `/api`:
-
-| Registration | New callback URL |
-|---|---|
-| OAuth App (sign-in) | `http://localhost:3000/api/auth/callback/github` (was port 3001) |
-| GitHub App (repo access), if you made one | `http://localhost:3000/api/integrations/github/callback` (was `localhost:8000/auth/github/callback`) |
+**Switch to the org GitHub App.** Personal OAuth Apps and GitHub Apps are no longer used. Replace `GITHUB_LOGIN_CLIENT_*` and `GITHUB_CLIENT_*` in `.env` with the org App's ID and secret (see [step 2](#2-get-the-org-github-app-credentials)), run `docker compose up -d`, then unlink and re-link GitHub: tokens from your old app don't work with the new one. You can delete your personal apps afterwards.
 
 ## Everyday development
 
@@ -173,7 +169,7 @@ Then `pnpm dev` and open <http://localhost:5173>. The terminal shows `[api proxy
 | `scripts/check.sh [--fix]` | Lint, format check, migration check, backend tests. `--fix` applies formatting first |
 | `scripts/new-migration.sh "msg"` | Generates an Alembic migration from model changes |
 | `scripts/reset-db.sh` | Deletes the local database and starts fresh. Asks you to type `reset` first |
-| `scripts/deploy.sh [branch or commit]` | On a server: checks out a branch or commit (default: latest `Main`), rebuilds what changed, waits until healthy. Used by Jenkins |
+| `scripts/deploy.sh [branch or commit]` | On a server: checks out a branch or commit (default: latest `Main`), rebuilds what changed, waits until healthy |
 
 ## Backend
 
@@ -229,31 +225,46 @@ docker compose exec postgres psql -U app -d appdb -c "ALTER USER app PASSWORD 't
 docker compose up -d
 ```
 
-## GitHub App for repo access (optional)
+## GitHub App for repo access
 
-This is separate from the OAuth App used for sign-in. A GitHub **App** lets the backend read a user's repositories. Without one, everything else works and linking returns 503.
+The org owns one GitHub App that every environment uses. A user clicks "Connect GitHub", authorizes the App with their own GitHub account, and the backend stores that user's token (encrypted) to call the GitHub API on their behalf. Without the App's credentials, everything else works and linking returns 503.
 
-1. Go to <https://github.com/settings/apps/new> and fill in:
+What a user's token can reach is limited three ways: the App's permissions, the user's own access, and the accounts where the App is **installed**. Authorizing isn't installing: to reach repos in their personal account, a user also installs the App there from its public page. Users can't choose scopes; they choose which repos the install covers.
 
-   | Field | Value |
-   |---|---|
-   | GitHub App name | anything unique, e.g. `yourname-side-project-dev` |
-   | Homepage URL | `http://localhost:3000` |
-   | Callback URL | `http://localhost:3000/api/integrations/github/callback` |
-   | Expire user authorization tokens | ticked |
-   | Webhook, Active | unticked |
-   | Repository permissions | Contents: Read-only, Metadata: Read-only |
-   | Where can this GitHub App be installed | Only on this account |
+### Linking your account
 
-2. Click **Create GitHub App**. Copy the **Client ID** (starts with `Iv`, not the numeric App ID), then **Generate a new client secret**.
-3. Add both to `.env` as `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`, then run `docker compose up -d`.
-4. Sign in at <http://localhost:3000>, then open <http://localhost:3000/api/integrations/github/link> in the same browser. You should land on `/settings?linked=github`.
+1. Put the org App's ID and secret in `.env` as `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` (see [step 2](#2-get-the-org-github-app-credentials)), then run `docker compose up -d`.
+2. Sign in at <http://localhost:3000>, then open <http://localhost:3000/api/integrations/github/link> in the same browser. Approve the App on GitHub. You should land back on `/landing`, showing your GitHub username and repositories.
+3. If no repositories are listed, the App isn't installed anywhere you can see. Click **Install the GitHub App** (shown when `GITHUB_APP_SLUG` is set to the App's name from `github.com/apps/<slug>`), pick your account or the org, and choose the repos. The same button changes the repo selection later.
+
+Start the link from the same origin as the backend. A local frontend proxied to a remote backend fails with `invalid_state`, because the callback returns to the remote address.
+
+### App settings (org admins)
+
+The App lives under the org: <https://github.com/organizations/failed-to-fetch/settings/apps>.
+
+| Field | Value |
+|---|---|
+| Homepage URL | the production frontend URL |
+| Redirect URIs | `<PUBLIC_URL>/api/integrations/github/callback` for every deployment, including `http://localhost:3000/...` (up to 10) |
+| Allow wildcard matching | unticked |
+| Expire user authorization tokens | ticked |
+| Request user authorization (OAuth) during installation | unticked (installs would come back without our `state` and fail) |
+| Enable Device Flow | unticked |
+| Setup URL | `<PUBLIC_URL>/landing` of the main deployment, so users return after installing |
+| Webhook, Active | unticked |
+| Repository permissions | Contents: Read-only, Metadata: Read-only |
+| Where can this GitHub App be installed | Any account |
+
+The same App's ID and secret also fill `GITHUB_LOGIN_CLIENT_*`, which the auth service requires. The login page doesn't offer "Sign in with GitHub" yet; if it's turned on, add `<PUBLIC_URL>/api/auth/callback/github` to the redirect URIs and set **Account permissions, Email addresses** to Read-only.
+
+To add a deployment, add its callback URL to the redirect URIs. To give a developer access, **Generate a new client secret** for them; revoke it when they leave.
 
 If it fails, the redirect ends in `?error=<reason>`:
 
 | Reason | Fix |
 |---|---|
-| `github_error` | Wrong client secret, or the callback URL isn't exactly `http://localhost:3000/api/integrations/github/callback` |
+| `github_error` | Wrong client secret (or it was revoked), or `<PUBLIC_URL>/api/integrations/github/callback` isn't in the App's redirect URIs |
 | `already_linked` | That GitHub account is linked to a different user |
 | `invalid_state`, `expired_state` | Took over 10 minutes, or the cookie was lost. Start again in the same browser |
 | `github_denied` | You cancelled on GitHub |
@@ -287,8 +298,8 @@ The same compose file runs on a Linux VM for testing. Everything is reached thro
    ```dotenv
    PUBLIC_URL=http://203.0.113.10:3000      # your VM's IP or hostname
    ```
-   To serve on port 80 instead, also set `FRONTEND_PORT=80` and drop `:3000` from `PUBLIC_URL`.
-3. **Register callback URLs for that address.** A GitHub OAuth App has only one callback URL, so create a second OAuth App for the VM with `<PUBLIC_URL>/api/auth/callback/github`, and put its ID and secret in the VM's `.env`. A GitHub App accepts several callback URLs, so you can add `<PUBLIC_URL>/api/integrations/github/callback` to your existing one.
+   To serve on port 80 instead, also set `FRONTEND_PORT=80` and drop `:3000` from `PUBLIC_URL`. For the shared dev account, set a strong `SEED_DEV_PASSWORD` (and optionally `SEED_DEV_EMAIL`) and share it via the password manager. The default `secret123` is public, so the seed skips it unless `PUBLIC_URL` is localhost. Or set `SEED_DEV_ACCOUNT=false` for no dev account.
+3. **Register the callback URL for that address.** Ask an org admin to add `<PUBLIC_URL>/api/integrations/github/callback` to the org GitHub App's redirect URIs, and put the App's ID and secret in the VM's `.env`.
 4. Allow the port in your cloud provider's firewall or security group (inbound TCP 3000, or 80).
 5. Start it with `scripts/setup.sh --up`.
 
@@ -321,91 +332,6 @@ Certificates are kept in the `caddy-data` volume and renewed automatically. If i
 
 **Limits.** This is still the development setup: the backend runs with auto-reload from a bind mount and the dev image. That's fine for testing on a VM, but it isn't production-ready.
 
-## Deploying with Jenkins
-
-The `Jenkinsfile` deploys every push to `Main`. Jenkins connects to the server over SSH and runs `scripts/deploy.sh <commit>`, which:
-- checks out that exact commit
-- runs `docker compose up -d --build`, so only services whose image or config changed are rebuilt and restarted, and migrations run as part of it
-- waits until everything is healthy, failing the Jenkins build if not
-
-Unchanged images come from Docker's build cache, so a one-line backend change rebuilds just the backend.
-
-### One-time setup
-
-1. **On the server:** set up the project as in [Running on a server or VM](#running-on-a-server-or-vm). That checkout must be able to `git fetch` without a password: for a private repo, add a read-only [deploy key](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/managing-deploy-keys) on GitHub. Don't edit tracked files there; `deploy.sh` refuses to deploy over hand edits.
-2. **An SSH key for Jenkins:** run `ssh-keygen -t ed25519 -f jenkins-deploy -N ""` anywhere. Append `jenkins-deploy.pub` to `~/.ssh/authorized_keys` on the server, for a user in the `docker` group.
-3. **In Jenkins:**
-   - Install the **Pipeline**, **Git** and **GitHub Branch Source** plugins (plus **Credentials Binding**, which is part of the standard install).
-   - Add two credentials:
-     - *SSH Username with private key*, ID `side-project-deploy-ssh`, with the server's username and the contents of `jenkins-deploy`.
-     - *Username with password*, ID `github-pat`, with your GitHub username and a fine-grained token that has read-only Contents and Metadata on this repo.
-   - Under Manage Jenkins → System, set **Jenkins URL** to the address GitHub will use. Under Global properties, set environment variables `DEPLOY_HOST` (e.g. `ubuntu@203.0.113.10`) and, if the checkout isn't `~/side-project`, `DEPLOY_DIR` (relative to that user's home, or absolute). Don't leave `DEPLOY_HOST` empty: Jenkins would then try to deploy on its own machine.
-   - Create a **Multibranch Pipeline** job with a **GitHub** branch source for this repo, credentials `github-pat` (or none, since the repo is public), discovering **all branches**. Every branch gets the *Build images* check that pull requests require. Only `Main`, or a build given `DEPLOY_REF`, deploys.
-4. **Trigger on push:** in the GitHub repo, Settings → Webhooks → Add webhook, with payload URL `https://<your-jenkins>/github-webhook/` (keep the trailing slash), content type `application/json`, and just the push event. If GitHub can't reach your Jenkins, set the job's "Scan Multibranch Pipeline Triggers" to run every 5 minutes instead.
-5. **Recommended: require both checks before merging into `Main`**, so broken code can't reach the deploy. See [Protecting Main](#protecting-main).
-
-### Protecting Main
-
-Every pull request gets two checks:
-
-| Check | From | Proves |
-|---|---|---|
-| `Backend tests` | GitHub Actions (`.github/workflows/backend.yml`) | backend lint, migrations, tests |
-| `continuous-integration/jenkins/pr-head` | Jenkins (*Build images* stage, on the pull request build) | all three production images build, including the frontend's TypeScript compile |
-
-To require them: GitHub repo → **Settings → Branches → Add classic branch protection rule**:
-- **Branch name pattern:** `Main`
-- ✓ **Require a pull request before merging**
-- ✓ **Require status checks to pass before merging**, then search for and add **`Backend tests`** and **`continuous-integration/jenkins/pr-head`**. A check only appears in the search after it has run at least once in the past week, so open a pull request first. Don't pick `continuous-integration/jenkins/branch`: that's the status for branch builds, and once a branch has a pull request Jenkins builds it as the pull request instead, so a required `…/branch` check would wait forever.
-- ✓ **Require branches to be up to date before merging** (optional: re-runs the checks against the latest `Main`)
-- ✓ **Do not allow bypassing the above settings**, so it applies to admins too
-- **Create**
-
-Both workflows must run for every branch, or a pull request waits forever for a missing check. That's why `Backend tests` runs on every pull request, and the Jenkins job must not filter out feature branches.
-
-**If Jenkins runs on the same machine as the app:**
-- **Jenkins in a Docker container** (the usual case): inside the container, `localhost` is the container itself. Add this to the Jenkins service in its compose file and recreate it:
-  ```yaml
-  extra_hosts:
-    - "host.docker.internal:host-gateway"
-  ```
-  Then set `DEPLOY_HOST=<user>@host.docker.internal`. The Jenkins image needs an SSH client. Check with `docker exec <jenkins-container> which ssh`, and if it's missing, add `openssh-client` in the Jenkins Dockerfile.
-- **Jenkins installed directly on the VM:** set `DEPLOY_HOST=<user>@localhost`. Or leave `DEPLOY_HOST` empty to run `deploy.sh` without SSH, in which case the `jenkins` user must be in the `docker` group and own the checkout, and `DEPLOY_DIR` must be an absolute path.
-
-**A plain Pipeline job also works** instead of a Multibranch one. Choose *Pipeline script from SCM*, Git, this repo, branch `*/Main`, script path `Jenkinsfile`, and under Triggers tick *GitHub hook trigger for GITScm polling*. The webhook from step 4 triggers it.
-
-### Deploying a branch
-
-Open the job → **Build with Parameters** and set `DEPLOY_REF` to a branch name (or commit). That branch replaces whatever is deployed until the next push to `Main` puts `Main` back. The first build after adding the Jenkinsfile registers the parameter; until then the button just says *Build Now*.
-
-**Migrations don't switch back on their own.** If the branch adds a migration, the database moves ahead of `Main`, and the next `Main` deploy fails with `Can't locate revision`. Before switching back, while the branch is still deployed, downgrade on the server:
-
-```sh
-docker compose run --rm backend alembic downgrade <Main's head revision>
-```
-
-### Disk usage
-
-Builds clean up after themselves:
-- the *Build images* stage removes its image tags
-- `deploy.sh` removes images replaced by a deploy
-- both drop Docker build cache unused for 7 days
-
-Jenkins keeps the last 30 builds per branch or pull request. In the job's configuration, set **Orphaned Item Strategy → Discard old items** (e.g. 7 days), so jobs for merged pull requests and deleted branches are removed too.
-
-To check on the server: `docker system df` shows images, containers, volumes and build cache; `df -h /` shows free space. To reclaim space at once, `docker builder prune -f` empties the build cache, and the next build is slower.
-
-### Rolling back
-
-On the server, deploy any earlier commit:
-
-```sh
-git log --oneline -10 origin/Main     # find the commit
-scripts/deploy.sh <commit>
-```
-
-The next push to `Main` deploys the latest code again. Migrations aren't rolled back automatically. If the bad commit added one, see [Database migrations](#database-migrations).
-
 ## Troubleshooting
 
 Start with `docker compose ps -a` and `docker compose logs <service> --tail 60`.
@@ -418,7 +344,7 @@ Start with `docker compose ps -a` and `docker compose logs <service> --tail 60`.
 | Backend logs `validation error for Settings` | A `.env` value is missing or malformed; the error names it. Run `scripts/setup.sh`, then `docker compose up -d` |
 | `password authentication failed for user "app"` | `POSTGRES_PASSWORD` in `.env` doesn't match the one the database was created with. See [Reset or change the database](#reset-or-change-the-database) |
 | `{"detail":"Authentication service unavailable."}` | `auth` is down: `docker compose logs auth --tail 60` |
-| `{"detail":"GitHub is not configured."}` | The optional repo-access GitHub App isn't set up. See [GitHub App for repo access](#github-app-for-repo-access-optional) |
+| `{"detail":"GitHub is not configured."}` | The optional repo-access GitHub App isn't set up. See [GitHub App for repo access](#github-app-for-repo-access) |
 | `relation "..." does not exist` | Migrations didn't run: `docker compose up -d`, then check `backend-migrate` |
 | `Bind for 0.0.0.0:3000 failed: port is already allocated` | Something else uses that port. Stop it, or set `FRONTEND_PORT` (and `PUBLIC_URL` to match) in `.env` |
 | Sign-in fails with 403 `Invalid origin` | The page's origin isn't trusted: it must be `PUBLIC_URL` or listed in `TRUSTED_ORIGINS` |

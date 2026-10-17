@@ -1,0 +1,46 @@
+name: auth
+
+on:
+  push:
+    branches: [Main]
+    paths: ["services/auth/**", ".github/workflows/auth.yml"]
+  # Every pull request, with no path filter, so "Auth service checks" can be a
+  # required check on Main (see backend.yml).
+  pull_request:
+
+concurrency:
+  group: auth-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Auth service checks  # the check name to require in branch protection
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/auth
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "12.10.1"  # keep in step with services/auth/Dockerfile
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: services/auth/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Tests
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
