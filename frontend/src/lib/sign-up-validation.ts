@@ -13,7 +13,6 @@ export const CODE_EXPIRED_ERROR =
 
 export type SignUpStep = 'details' | 'code' | 'password';
 
-/** Thrown by the sign-up handlers to send the user back to the step that needs fixing. */
 export class SignUpError extends Error {
   readonly step: SignUpStep;
 
@@ -42,4 +41,29 @@ export function validatePassword(password: string): string | null {
 
 export function validateCode(code: string): string | null {
   return /^\d{6}$/.test(code) ? null : CODE_ERROR;
+}
+
+export function toSignUpError(error: {
+  code?: string;
+  message?: string;
+  status?: number;
+}): Error {
+  if (error.status === 429) {
+    return new Error('Too many attempts. Wait a minute and try again.');
+  }
+  switch (error.code) {
+    case 'INVALID_EMAIL':
+      return new SignUpError(EMAIL_FORMAT_ERROR, 'details');
+    case 'INVALID_CODE':
+      return new SignUpError(CODE_ERROR, 'code');
+    case 'CODE_EXPIRED':
+    case 'TOO_MANY_ATTEMPTS':
+      return new SignUpError(CODE_EXPIRED_ERROR, 'code');
+    case 'PASSWORD_TOO_SHORT':
+    case 'PASSWORD_TOO_LONG':
+    case 'PASSWORD_TOO_WEAK':
+      return new SignUpError(PASSWORD_ERROR, 'password');
+    default:
+      return new Error(error.message || 'Account creation failed.');
+  }
 }

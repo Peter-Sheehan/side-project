@@ -25,7 +25,6 @@ export interface SignInCardProps {
   onSignUp?: () => void;
   /** A message shown above the form, e.g. after creating an account. */
   notice?: string | null;
-  /** Prefills the email field, e.g. with the address just signed up with. */
   defaultEmail?: string;
   forgotPasswordHref?: string;
   signUpHref?: string;

@@ -11,13 +11,7 @@ import { authClient } from '../lib/auth-client';
 import { useAuth } from '../lib/auth-context';
 import { SignInCard } from '../components/sign-in-card';
 import { SignUpCard, type SignUpCredentials } from '../components/sign-up-card';
-import {
-  CODE_ERROR,
-  CODE_EXPIRED_ERROR,
-  EMAIL_FORMAT_ERROR,
-  PASSWORD_ERROR,
-  SignUpError,
-} from '../lib/sign-up-validation';
+import { toSignUpError } from '../lib/sign-up-validation';
 import { Badge } from '../shadcn/components/ui/badge';
 
 import styles from './login.module.scss';
@@ -55,34 +49,7 @@ const defaultFeatures: readonly Feature[] = [
   },
 ];
 
-// The auth service repeats the client-side checks; send each of its errors
-// back to the step the user has to redo.
-function toSignUpError(error: {
-  code?: string;
-  message?: string;
-  status?: number;
-}): Error {
-  if (error.status === 429) {
-    return new Error('Too many attempts. Wait a minute and try again.');
-  }
-  switch (error.code) {
-    case 'INVALID_EMAIL':
-      return new SignUpError(EMAIL_FORMAT_ERROR, 'details');
-    case 'INVALID_CODE':
-      return new SignUpError(CODE_ERROR, 'code');
-    case 'CODE_EXPIRED':
-    case 'TOO_MANY_ATTEMPTS':
-      return new SignUpError(CODE_EXPIRED_ERROR, 'code');
-    case 'PASSWORD_TOO_SHORT':
-    case 'PASSWORD_TOO_LONG':
-    case 'PASSWORD_TOO_WEAK':
-      return new SignUpError(PASSWORD_ERROR, 'password');
-    default:
-      return new Error(error.message || 'Account creation failed.');
-  }
-}
-
-// The verification link redirects back to /login?error=<code> when it fails.
+// A failed verification link redirects to /login?error=<code>.
 function verifyLinkNotice(error: string | null): string | null {
   if (!error) return null;
   return error === 'TOKEN_EXPIRED'

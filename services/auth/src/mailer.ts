@@ -1,12 +1,5 @@
 import nodemailer from "nodemailer";
 
-// Sends the auth service's emails over SMTP. SMTP_URL picks the server:
-//   smtp://mailpit:1025                      Mailpit in Docker (the compose default);
-//                                            read the mail at http://localhost:8025
-//   smtps://USER:PASS@smtp.example.com:465   a real provider (Resend, SES, Postmark...)
-// Without SMTP_URL (e.g. running the service outside Docker) emails are only
-// logged, so the verification link can be copied from the console.
-
 export interface Email {
     to: string;
     subject: string;
@@ -87,8 +80,8 @@ export function signUpCodeEmail(to: string, code: string): Email {
     };
 }
 
-// Sent instead of a sign-up code when someone signs up with an email that
-// already has an account, so the sign-up page never reveals which emails exist.
+// Sent in place of a sign-up code, so the sign-up page never reveals which
+// emails have accounts.
 export function existingAccountEmail(to: string, name: string, signInUrl: string): Email {
     const lines = [
         `Hi ${name},`,

@@ -1,0 +1,49 @@
+name: frontend
+
+on:
+  push:
+    branches: [Main]
+    paths: ["frontend/**", ".github/workflows/frontend.yml"]
+  # Every pull request, with no path filter, so "Frontend checks" can be a
+  # required check on Main (see backend.yml).
+  pull_request:
+
+concurrency:
+  group: frontend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Frontend checks  # the check name to require in branch protection
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "12.10.1"  # keep in step with frontend/Dockerfile
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Tests
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build

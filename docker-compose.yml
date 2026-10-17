@@ -170,9 +170,7 @@ services:
     networks:
       - app-network
 
-  # Catches the auth service's emails (verification links etc.) so nothing is
-  # really sent. Read them at http://localhost:8025. With a real SMTP_URL in
-  # .env, mail goes there instead and this sits unused.
+  # Catches the auth service's emails in dev: http://localhost:8025
   mailpit:
     image: axllent/mailpit:v1.27
     container_name: mailpit

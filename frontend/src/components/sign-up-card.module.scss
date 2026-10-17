@@ -1,5 +1,3 @@
-// Additions to sign-in-card.module.scss for the multi-step sign-up card.
-
 .steps {
   display: flex;
   gap: 0.5rem;
@@ -17,7 +15,6 @@
   color: var(--muted-foreground);
   white-space: nowrap;
 
-  // The line joining one step to the next.
   &:not(:last-child)::after {
     content: '';
     flex: 1;

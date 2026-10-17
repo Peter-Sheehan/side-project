@@ -35,7 +35,6 @@ export interface SignUpCredentials {
   name: string;
   email: string;
   password: string;
-  /** The email code, checked again when the account is created. */
   code: string;
 }
 
@@ -68,7 +67,6 @@ export function SignUpCard({
   const [step, setStep] = useState<SignUpStep>('details');
   const [details, setDetails] = useState<Details>({ name: '', email: '' });
   const [code, setCode] = useState('');
-  // An error from a later step that belongs to an earlier one, shown when it mounts.
   const [carriedError, setCarriedError] = useState<string | null>(null);
 
   function goTo(next: SignUpStep, error: string | null = null) {
@@ -76,8 +74,6 @@ export function SignUpCard({
     setStep(next);
   }
 
-  // Runs a step's request. Errors for another step send the user back to it;
-  // anything else is shown on the current step.
   async function run(task: () => Promise<void>): Promise<string | null> {
     try {
       await task();
@@ -216,7 +212,6 @@ function Progress({ current }: { current: SignUpStep }) {
   );
 }
 
-/** The header + form layout every sign-up step shares. */
 function Step({
   step,
   title,

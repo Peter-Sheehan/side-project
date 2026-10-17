@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "auth:generate": "auth generate --config ./src/auth.ts",
     "auth:migrate": "dotenv -e ../../.env -- auth migrate --config ./src/auth.ts",
     "auth:migrate:docker": "auth migrate --config ./src/auth.ts --yes"
@@ -23,7 +25,8 @@
     "auth": "1.7.7",
     "dotenv-cli": "^8.0.0",
     "tsx": "^4.20.0",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "vitest": "5.0.3"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

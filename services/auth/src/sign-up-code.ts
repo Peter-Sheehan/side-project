@@ -3,16 +3,9 @@ import type { AuthContext, BetterAuthPlugin } from "better-auth";
 import { APIError, createAuthEndpoint, createAuthMiddleware } from "better-auth/api";
 import * as z from "zod";
 
-// Sign-up in three steps, with no account until the last one:
-//   POST /sign-up/send-code    { email }        emails a 6-digit code
-//   POST /sign-up/verify-code  { email, code }  checks it (without using it up)
-//   POST /sign-up/email        { name, email, password, code }
-//                              Better Auth's own sign-up; refused unless the code
-//                              is valid, and the account is created verified.
-//
-// send-code answers the same for every address. One that already has an account
-// gets a "you already have an account" email instead of a code, so the page can't
-// be used to find out who's registered.
+// No account exists until /sign-up/email succeeds with a valid code. send-code
+// answers the same for every address so it can't be used to find out who's
+// registered.
 
 const CODE_TTL_SECONDS = 10 * 60;
 const RESEND_COOLDOWN_SECONDS = 60;
@@ -33,8 +26,7 @@ const fail = (code: string, message: string) => new APIError("BAD_REQUEST", { co
 const hashCode = (secret: string, email: string, code: string) =>
     createHmac("sha256", secret).update(`${email}:${code}`).digest("hex");
 
-// True if a code or notice went to this address under a minute ago. Stops the
-// endpoint being used to flood someone's inbox.
+// Stops the endpoint being used to flood someone's inbox.
 async function recentlySent(ctx: AuthContext, id: string, ttlSeconds: number): Promise<boolean> {
     const record = await ctx.internalAdapter.findVerificationValue(id);
     if (!record) return false;

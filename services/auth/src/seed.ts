@@ -7,11 +7,9 @@
 // it's refused anywhere but localhost: on a VM or server, set a strong
 // SEED_DEV_PASSWORD in its .env and share it through a password manager.
 //
-// The account is created with Better Auth's own adapter and password hasher, so
-// sign-in accepts it, and it's marked verified so no confirmation email is sent.
-// Running it again only marks an existing dev account verified (accounts made
-// before email verification was required aren't); changing SEED_DEV_PASSWORD
-// later doesn't update it.
+// Running it again only marks an existing dev account verified (ones made before
+// email verification was required aren't); changing SEED_DEV_PASSWORD later
+// doesn't update it.
 import { auth } from "./auth.js";
 
 const DEFAULT_PASSWORD = "secret123";

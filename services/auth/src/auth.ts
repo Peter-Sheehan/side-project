@@ -182,10 +182,9 @@ export const auth = betterAuth({
 
     emailVerification: {
         sendOnSignUp: false,
-        // An unverified user who signs in with the right password gets a new link.
         sendOnSignIn: true,
-        // Opening the link signs the user in, then redirects to the callbackURL
-        // the frontend passed (/login, which forwards signed-in users on).
+        // Redirects to the frontend's callbackURL (/login), which forwards
+        // signed-in users on.
         autoSignInAfterVerification: true,
         expiresIn: 60 * 60,
         sendVerificationEmail: async ({ user, url }) => {
