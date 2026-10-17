@@ -4,12 +4,15 @@ import { BrowserRouter } from 'react-router'
 import './index.css'
 import App from './App.tsx'
 import { AuthProvider } from './components/auth-provider'
+import { TooltipProvider } from './shadcn/components/ui/tooltip'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
       <AuthProvider>
-        <App />
+        <TooltipProvider>
+          <App />
+        </TooltipProvider>
       </AuthProvider>
     </BrowserRouter>
   </StrictMode>,

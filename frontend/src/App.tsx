@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router";
 
 import { RequireAuth, RequireGuest } from "@/components/route-guards";
 import LoginPage from "@/pages/login";
+import SettingsPage from "@/pages/settings";
 import SuccessPage from "@/pages/success";
 
 export default function App() {
@@ -13,6 +14,7 @@ export default function App() {
 
       <Route element={<RequireAuth redirectTo="/login" />}>
         <Route path="/landing" element={<SuccessPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
       </Route>
 
       {/* RequireAuth bounces signed-out users on to /login */}

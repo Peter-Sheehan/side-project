@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
 
-import Header from "../components/header";
+import { AppLayout } from "../components/app-layout";
 import { RepoViewer } from "../components/repo-viewer";
 import { useAuth } from "../lib/auth-context";
 
@@ -121,7 +121,7 @@ function RepoList({
 }
 
 export default function SuccessPage() {
-    const { session, signOut } = useAuth();
+    const { session } = useAuth();
     const email = session?.user.email ?? "";
     const [searchParams, setSearchParams] = useSearchParams();
     const [github, setGithub] = useState<GitHubState>({ status: "loading" });
@@ -157,27 +157,21 @@ export default function SuccessPage() {
     const handleRevoked = useCallback(() => setGithub({ status: "revoked" }), []);
 
     return (
-        <>
-            <Header />
-            <main className="flex min-h-svh items-center justify-center bg-background px-4">
-                <section className="w-full max-w-md rounded-2xl border p-8 text-center shadow-sm">
-                    <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full bg-green-100 text-3xl text-green-700">
-                        ✓
-                    </div>
+        <AppLayout section="Workspace" title="Dashboard">
+            <div>
+                <h1 className="text-2xl font-semibold">Welcome back</h1>
+                <p className="mt-1 break-all text-sm text-muted-foreground">
+                    Signed in as {email}
+                </p>
+            </div>
 
-                    <h1 className="text-2xl font-semibold">
-                        You have successfully signed in!
-                    </h1>
-
-                    <p className="mt-3 text-sm text-muted-foreground">
-                        Welcome back. You are signed in with:
-                    </p>
-
-                    <p className="mt-2 break-all font-medium">{email}</p>
+            <div className="grid gap-4 lg:grid-cols-2">
+                <section className="rounded-xl border p-6">
+                    <h2 className="font-semibold">GitHub</h2>
 
                     {github.status === "linked" ? (
                         <>
-                            <p className="mt-8 rounded-lg bg-green-100 px-4 py-3 text-sm text-green-700">
+                            <p className="mt-4 rounded-lg bg-green-100 px-4 py-3 text-sm text-green-700">
                                 Successfully linked to GitHub
                                 {github.login && (
                                     <>
@@ -194,40 +188,34 @@ export default function SuccessPage() {
                     ) : (
                         <>
                             {linkError && (
-                                <p className="mt-8 text-sm text-red-600">{linkError}</p>
+                                <p className="mt-4 text-sm text-red-600">{linkError}</p>
                             )}
                             {github.status === "revoked" && (
-                                <p className="mt-8 text-sm text-red-600">
+                                <p className="mt-4 text-sm text-red-600">
                                     Your GitHub access was revoked or has expired. Link
                                     GitHub again to keep using your repositories.
                                 </p>
                             )}
                             {github.status === "failed" && (
-                                <p className="mt-8 text-sm text-red-600">
+                                <p className="mt-4 text-sm text-red-600">
                                     Couldn't check your GitHub link.
                                 </p>
                             )}
                             <a
                                 href="/api/integrations/github/link"
                                 aria-disabled={github.status === "loading"}
-                                className="mt-8 block w-full rounded-lg bg-primary px-4 py-3 text-primary-foreground aria-disabled:pointer-events-none aria-disabled:opacity-50"
+                                className="mt-4 block w-full rounded-lg bg-primary px-4 py-3 text-center text-primary-foreground aria-disabled:pointer-events-none aria-disabled:opacity-50"
                             >
                                 Link GitHub
                             </a>
                         </>
                     )}
-
-                    <RepoViewer onRevoked={handleRevoked} />
-
-                    <button
-                        type="button"
-                        onClick={signOut}
-                        className="mt-8 w-full rounded-lg border px-4 py-3"
-                    >
-                        Sign out
-                    </button>
                 </section>
-            </main>
-        </>
+
+                <section className="rounded-xl border p-6 [&>div]:mt-0">
+                    <RepoViewer onRevoked={handleRevoked} />
+                </section>
+            </div>
+        </AppLayout>
     );
 }
