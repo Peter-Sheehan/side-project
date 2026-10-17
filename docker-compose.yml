@@ -137,6 +137,8 @@ services:
       SEED_DEV_NAME: ${SEED_DEV_NAME:-}
       SEED_DEV_EMAIL: ${SEED_DEV_EMAIL:-}
       SEED_DEV_PASSWORD: ${SEED_DEV_PASSWORD:-}
+      SMTP_URL: ${SMTP_URL:-smtp://mailpit:1025}
+      SMTP_FROM: ${SMTP_FROM:-SideProject <no-reply@localhost>}
     restart: "no"
     depends_on:
       postgres:
@@ -165,6 +167,17 @@ services:
         condition: service_healthy
       auth-migrate:
         condition: service_completed_successfully
+    networks:
+      - app-network
+
+  # Catches the auth service's emails (verification links etc.) so nothing is
+  # really sent. Read them at http://localhost:8025. With a real SMTP_URL in
+  # .env, mail goes there instead and this sits unused.
+  mailpit:
+    image: axllent/mailpit:v1.27
+    container_name: mailpit
+    ports:
+      - "127.0.0.1:8025:8025"
     networks:
       - app-network
 

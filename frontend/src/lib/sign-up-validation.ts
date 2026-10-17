@@ -1,0 +1,45 @@
+export const PASSWORD_MIN_LENGTH = 8;
+export const PASSWORD_MAX_LENGTH = 128;
+
+export const EMAIL_FORMAT_ERROR =
+  'That email address looks wrong. Check the format (e.g. you@example.com) and try again.';
+export const NAME_REQUIRED_ERROR = 'Enter your name.';
+export const PASSWORD_REQUIREMENTS = `Use ${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} characters, with at least one letter and one number.`;
+export const PASSWORD_ERROR = `That password doesn't meet the requirements. ${PASSWORD_REQUIREMENTS}`;
+export const CODE_ERROR =
+  "That code isn't right. Check the 6-digit code in the email and try again.";
+export const CODE_EXPIRED_ERROR =
+  'That code has expired or had too many wrong tries. Send a new one.';
+
+export type SignUpStep = 'details' | 'code' | 'password';
+
+/** Thrown by the sign-up handlers to send the user back to the step that needs fixing. */
+export class SignUpError extends Error {
+  readonly step: SignUpStep;
+
+  constructor(message: string, step: SignUpStep) {
+    super(message);
+    this.step = step;
+  }
+}
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export function validateDetails(name: string, email: string): string | null {
+  if (!name) return NAME_REQUIRED_ERROR;
+  if (!EMAIL_PATTERN.test(email)) return EMAIL_FORMAT_ERROR;
+  return null;
+}
+
+export function validatePassword(password: string): string | null {
+  const ok =
+    password.length >= PASSWORD_MIN_LENGTH &&
+    password.length <= PASSWORD_MAX_LENGTH &&
+    /[A-Za-z]/.test(password) &&
+    /\d/.test(password);
+  return ok ? null : PASSWORD_ERROR;
+}
+
+export function validateCode(code: string): string | null {
+  return /^\d{6}$/.test(code) ? null : CODE_ERROR;
+}
