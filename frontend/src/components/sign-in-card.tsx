@@ -26,6 +26,7 @@ export interface SignInCardProps {
   /** A message shown above the form, e.g. after creating an account. */
   notice?: string | null;
   defaultEmail?: string;
+  onForgotPassword?: () => void;
   forgotPasswordHref?: string;
   signUpHref?: string;
   termsHref?: string;
@@ -38,6 +39,7 @@ export function SignInCard({
   onSignUp,
   notice,
   defaultEmail,
+  onForgotPassword,
   forgotPasswordHref = '/forgot-password',
   signUpHref = '/sign-up',
   termsHref = '/terms',
@@ -85,9 +87,19 @@ export function SignInCard({
           <div className={styles.field}>
             <div className={styles.labelRow}>
               <Label htmlFor="password">Password</Label>
-              <a href={forgotPasswordHref} className={styles.mutedLink}>
-                Forgot password?
-              </a>
+              {onForgotPassword ? (
+                <button
+                  type="button"
+                  onClick={onForgotPassword}
+                  className={styles.mutedLink}
+                >
+                  Forgot password?
+                </button>
+              ) : (
+                <a href={forgotPasswordHref} className={styles.mutedLink}>
+                  Forgot password?
+                </a>
+              )}
             </div>
             <Input
               id="password"

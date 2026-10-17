@@ -1,14 +1,15 @@
 import { betterAuth } from "better-auth";
 import { Pool } from "pg";
 import { genericOAuth } from "better-auth/plugins";
-import { APIError, createAuthMiddleware } from "better-auth/api";
 import {
     existingAccountEmail,
+    resetPasswordEmail,
     sendEmail,
     signUpCodeEmail,
     verificationEmail,
     type Email,
 } from "./mailer.js";
+import { accountRules } from "./account-rules.js";
 import { signUpCode } from "./sign-up-code.js";
 
 const requiredEnv = (name: string): string => {
@@ -54,6 +55,12 @@ async function sendSafely(email: Email): Promise<void> {
         console.error(`[mail] couldn't send "${email.subject}" to ${email.to}:`, err);
     }
 }
+
+// Per address, so reset emails can't be used to flood an inbox from many IPs.
+// In memory: fine for one auth instance.
+const RESET_EMAIL_COOLDOWN_MS = 60 * 1000;
+const lastResetEmail = new Map<string, number>();
+
 
 const pool = new Pool({
     connectionString: requiredEnv("DATABASE_URL"),
@@ -174,10 +181,18 @@ export const auth = betterAuth({
     emailAndPassword: {
         enabled: true,
         autoSignIn: false,
-        // Mirrored in frontend/src/lib/sign-up-validation.ts.
+        // Mirrored in frontend/src/lib/sign-up-validation.ts, like account-rules.ts.
         minPasswordLength: 8,
         maxPasswordLength: 128,
         requireEmailVerification: true,
+        resetPasswordTokenExpiresIn: 60 * 60,
+        revokeSessionsOnPasswordReset: true,
+        sendResetPassword: async ({ user, url }) => {
+            const last = lastResetEmail.get(user.email) ?? 0;
+            if (Date.now() - last < RESET_EMAIL_COOLDOWN_MS) return;
+            lastResetEmail.set(user.email, Date.now());
+            await sendSafely(resetPasswordEmail(user.email, user.name, url));
+        },
     },
 
     emailVerification: {
@@ -192,21 +207,6 @@ export const auth = betterAuth({
         },
     },
 
-    hooks: {
-        before: createAuthMiddleware(async (ctx) => {
-            if (ctx.path !== "/sign-up/email") return;
-            const password: unknown = ctx.body?.password;
-            if (
-                typeof password === "string" &&
-                !(/[A-Za-z]/.test(password) && /\d/.test(password))
-            ) {
-                throw new APIError("BAD_REQUEST", {
-                    code: "PASSWORD_TOO_WEAK",
-                    message: "Password must contain at least one letter and one number.",
-                });
-            }
-        }),
-    },
 
     // Sessions end after 30 minutes without activity. GET /api/auth/get-session
     // renews one (new expiry in the DB, new cookie) once it's over 5 minutes old;
@@ -232,6 +232,7 @@ export const auth = betterAuth({
     },
 
     plugins: [
+        accountRules(),
         signUpCode({
             sendCode: (email, code) => sendSafely(signUpCodeEmail(email, code)),
             sendExistingAccount: (user) =>

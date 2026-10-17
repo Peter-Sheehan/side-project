@@ -64,6 +64,20 @@ export function verificationEmail(to: string, name: string, url: string): Email 
     };
 }
 
+export function resetPasswordEmail(to: string, name: string, url: string): Email {
+    const lines = [
+        `Hi ${name},`,
+        "Someone asked to reset the password for your SideProject account. The link expires in 1 hour.",
+        "If it wasn't you, ignore this email: your password stays the same.",
+    ];
+    return {
+        to,
+        subject: "Reset your password",
+        text: [...lines, url].join("\n\n"),
+        html: layout(lines, { url, label: "Reset password" }),
+    };
+}
+
 // No name in this one: it isn't known to belong to the address yet, and putting
 // user-typed text in an email to someone else invites abuse.
 export function signUpCodeEmail(to: string, code: string): Email {

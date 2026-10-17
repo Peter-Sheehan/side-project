@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import {
   GitCommitHorizontal,
@@ -7,11 +7,19 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 
-import { authClient } from '../lib/auth-client';
+import { authClient, postAuth } from '../lib/auth-client';
 import { useAuth } from '../lib/auth-context';
+import {
+  ForgotPasswordCard,
+  ResetPasswordCard,
+} from '../components/password-reset-cards';
 import { SignInCard } from '../components/sign-in-card';
 import { SignUpCard, type SignUpCredentials } from '../components/sign-up-card';
-import { toSignUpError } from '../lib/sign-up-validation';
+import {
+  RESET_LINK_ERROR,
+  toAccountErrorMessage,
+  toSignUpError,
+} from '../lib/sign-up-validation';
 import { Badge } from '../shadcn/components/ui/badge';
 
 import styles from './login.module.scss';
@@ -23,7 +31,7 @@ export interface Feature {
 }
 
 // type Provider = 'github' | 'gitlab' | 'bitbucket';
-type AuthMode = 'signin' | 'signup';
+type AuthMode = 'signin' | 'signup' | 'forgot' | 'reset';
 
 export interface LoginPageProps {
   productName?: string;
@@ -65,12 +73,25 @@ export default function LoginPage({
 }: LoginPageProps) {
   const navigate = useNavigate();
   const { refreshSession } = useAuth();
-  const [mode, setMode] = useState<AuthMode>('signin');
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  // A reset link lands on /login?reset=1&token=… or, if it's no good, &error=….
+  const [resetLink] = useState(() => ({
+    isReset: searchParams.has('reset'),
+    token: searchParams.get('token'),
+    failed: searchParams.has('error'),
+  }));
+  const [mode, setMode] = useState<AuthMode>(() =>
+    !resetLink.isReset ? 'signin' : resetLink.token ? 'reset' : 'forgot',
+  );
   const [signInEmail, setSignInEmail] = useState('');
   const [notice, setNotice] = useState<string | null>(() =>
-    verifyLinkNotice(searchParams.get('error')),
+    resetLink.isReset ? null : verifyLinkNotice(searchParams.get('error')),
   );
+
+  // Keeps the reset token out of the address bar and history.
+  useEffect(() => {
+    if (searchParams.size > 0) setSearchParams({}, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   async function handleSignIn({
     email,
@@ -107,7 +128,7 @@ export default function LoginPage({
 
 
   async function postSignUpStep(path: string, body: object) {
-    const { error } = await authClient.$fetch(path, { method: 'POST', body });
+    const error = await postAuth(path, body);
     if (error) throw toSignUpError(error);
   }
 
@@ -126,6 +147,24 @@ export default function LoginPage({
     await postSignUpStep('/sign-up/email', { name, email, password, code });
     setSignInEmail(email);
     setNotice('Account created. Sign in to continue.');
+    setMode('signin');
+  }
+
+  async function handleRequestReset(email: string) {
+    const error = await postAuth('/request-password-reset', {
+      email,
+      redirectTo: '/login?reset=1',
+    });
+    if (error) throw new Error(toAccountErrorMessage(error));
+  }
+
+  async function handleReset(newPassword: string) {
+    const error = await postAuth('/reset-password', {
+      token: resetLink.token,
+      newPassword,
+    });
+    if (error) throw new Error(toAccountErrorMessage(error));
+    setNotice('Password reset. Sign in with your new password.');
     setMode('signin');
   }
 
@@ -180,16 +219,19 @@ export default function LoginPage({
           aria-labelledby="auth-title"
         >
 
-          {mode === 'signin' ? (
+          {mode === 'signin' && (
             <SignInCard
               onSignIn={handleSignIn}
               onSignUp={() => changeMode('signup')}
+              onForgotPassword={() => changeMode('forgot')}
               notice={notice}
               defaultEmail={signInEmail}
               termsHref="/terms"
               privacyHref="/privacy"
             />
-          ) : (
+          )}
+
+          {mode === 'signup' && (
             <SignUpCard
               onSendCode={handleSendCode}
               onVerifyCode={handleVerifyCode}
@@ -197,6 +239,21 @@ export default function LoginPage({
               onSignIn={() => changeMode('signin')}
               termsHref="/terms"
               privacyHref="/privacy"
+            />
+          )}
+
+          {mode === 'forgot' && (
+            <ForgotPasswordCard
+              onRequestReset={handleRequestReset}
+              onSignIn={() => changeMode('signin')}
+              initialError={resetLink.failed ? RESET_LINK_ERROR : null}
+            />
+          )}
+
+          {mode === 'reset' && (
+            <ResetPasswordCard
+              onReset={handleReset}
+              onSignIn={() => changeMode('signin')}
             />
           )}
         </section>

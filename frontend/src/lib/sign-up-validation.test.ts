@@ -7,10 +7,14 @@ import {
   NAME_REQUIRED_ERROR,
   PASSWORD_ERROR,
   PASSWORD_MAX_LENGTH,
+  RATE_LIMIT_ERROR,
+  RESET_LINK_ERROR,
   SignUpError,
+  toAccountErrorMessage,
   toSignUpError,
   validateCode,
   validateDetails,
+  validateEmail,
   validatePassword,
 } from './sign-up-validation';
 
@@ -80,5 +84,33 @@ describe('toSignUpError', () => {
     const error = toSignUpError({ code: 'SOMETHING_ELSE', message: 'Boom' });
     expect(error).not.toBeInstanceOf(SignUpError);
     expect(error.message).toBe('Boom');
+  });
+});
+
+describe('validateEmail', () => {
+  it('accepts a well-formed email', () => {
+    expect(validateEmail('ada@example.com')).toBeNull();
+  });
+
+  it('rejects a malformed one', () => {
+    expect(validateEmail('ada@example')).toBe(EMAIL_FORMAT_ERROR);
+  });
+});
+
+describe('toAccountErrorMessage', () => {
+  it.each([
+    ['PASSWORD_TOO_WEAK', PASSWORD_ERROR],
+    ['INVALID_TOKEN', RESET_LINK_ERROR],
+    ['INVALID_PASSWORD', 'Your current password is incorrect.'],
+  ])('maps %s', (code, message) => {
+    expect(toAccountErrorMessage({ code })).toBe(message);
+  });
+
+  it('reports rate limiting', () => {
+    expect(toAccountErrorMessage({ status: 429 })).toBe(RATE_LIMIT_ERROR);
+  });
+
+  it('falls back to the server message', () => {
+    expect(toAccountErrorMessage({ code: 'OTHER', message: 'Boom' })).toBe('Boom');
   });
 });
