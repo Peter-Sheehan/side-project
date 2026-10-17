@@ -28,7 +28,7 @@ Because it's all one origin, there's no CORS, and the session cookie is first-pa
 
 The direct ports are bound to `127.0.0.1` for debugging, so other machines can't reach them.
 
-Signing in sets a `better-auth.session_token` cookie. When the backend gets a request with that cookie, it asks `auth` who the user is and caches the answer for 60.
+Signing in sets a `better-auth.session_token` cookie. When the backend gets a request with that cookie, it asks `auth` who the user is and caches the answer for 60 seconds.
 
 ## Prerequisites
 
