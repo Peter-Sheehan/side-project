@@ -25,6 +25,7 @@ export interface SignInCardProps {
   onSignUp?: () => void;
   /** A message shown above the form, e.g. after creating an account. */
   notice?: string | null;
+  defaultEmail?: string;
   forgotPasswordHref?: string;
   signUpHref?: string;
   termsHref?: string;
@@ -36,6 +37,7 @@ export function SignInCard({
   onSignIn,
   onSignUp,
   notice,
+  defaultEmail,
   forgotPasswordHref = '/forgot-password',
   signUpHref = '/sign-up',
   termsHref = '/terms',
@@ -74,6 +76,7 @@ export function SignInCard({
               type="email"
               autoComplete="email"
               placeholder="you@example.com"
+              defaultValue={defaultEmail}
               required
               disabled={pending}
             />

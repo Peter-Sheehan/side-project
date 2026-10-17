@@ -99,7 +99,14 @@ Then open <http://localhost:3000> and sign in as **dev@gmail.com** / **secret123
 scripts/check.sh
 ```
 
-This runs what CI runs: lint, a format check, a migration check and the backend tests. All should pass.
+This runs what CI runs for the backend: lint, a format check, a migration check and the backend tests. All should pass.
+
+The frontend and auth service have their own checks (run on your machine, with pnpm):
+
+```sh
+cd frontend && pnpm lint && pnpm typecheck && pnpm test
+cd services/auth && pnpm typecheck && pnpm test
+```
 
 ### Upgrading from an older checkout
 
@@ -162,7 +169,7 @@ Then `pnpm dev` and open <http://localhost:5173>. The terminal shows `[api proxy
 | `scripts/check.sh [--fix]` | Lint, format check, migration check, backend tests. `--fix` applies formatting first |
 | `scripts/new-migration.sh "msg"` | Generates an Alembic migration from model changes |
 | `scripts/reset-db.sh` | Deletes the local database and starts fresh. Asks you to type `reset` first |
-| `scripts/deploy.sh [branch or commit]` | On a server: checks out a branch or commit (default: latest `Main`), rebuilds what changed, waits until healthy. Used by Jenkins |
+| `scripts/deploy.sh [branch or commit]` | On a server: checks out a branch or commit (default: latest `Main`), rebuilds what changed, waits until healthy |
 
 ## Backend
 
@@ -324,91 +331,6 @@ Caddy can get a free Let's Encrypt certificate by itself, as long as it has a ho
 Certificates are kept in the `caddy-data` volume and renewed automatically. If issuance fails, the logs say why. Usually port 80 isn't reachable from the internet, or the hostname doesn't resolve to this VM.
 
 **Limits.** This is still the development setup: the backend runs with auto-reload from a bind mount and the dev image. That's fine for testing on a VM, but it isn't production-ready.
-
-## Deploying with Jenkins
-
-The `Jenkinsfile` deploys every push to `Main`. Jenkins connects to the server over SSH and runs `scripts/deploy.sh <commit>`, which:
-- checks out that exact commit
-- runs `docker compose up -d --build`, so only services whose image or config changed are rebuilt and restarted, and migrations run as part of it
-- waits until everything is healthy, failing the Jenkins build if not
-
-Unchanged images come from Docker's build cache, so a one-line backend change rebuilds just the backend.
-
-### One-time setup
-
-1. **On the server:** set up the project as in [Running on a server or VM](#running-on-a-server-or-vm). That checkout must be able to `git fetch` without a password: for a private repo, add a read-only [deploy key](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/managing-deploy-keys) on GitHub. Don't edit tracked files there; `deploy.sh` refuses to deploy over hand edits.
-2. **An SSH key for Jenkins:** run `ssh-keygen -t ed25519 -f jenkins-deploy -N ""` anywhere. Append `jenkins-deploy.pub` to `~/.ssh/authorized_keys` on the server, for a user in the `docker` group.
-3. **In Jenkins:**
-   - Install the **Pipeline**, **Git** and **GitHub Branch Source** plugins (plus **Credentials Binding**, which is part of the standard install).
-   - Add two credentials:
-     - *SSH Username with private key*, ID `side-project-deploy-ssh`, with the server's username and the contents of `jenkins-deploy`.
-     - *Username with password*, ID `github-pat`, with your GitHub username and a fine-grained token that has read-only Contents and Metadata on this repo.
-   - Under Manage Jenkins → System, set **Jenkins URL** to the address GitHub will use. Under Global properties, set environment variables `DEPLOY_HOST` (e.g. `ubuntu@203.0.113.10`) and, if the checkout isn't `~/side-project`, `DEPLOY_DIR` (relative to that user's home, or absolute). Don't leave `DEPLOY_HOST` empty: Jenkins would then try to deploy on its own machine.
-   - Create a **Multibranch Pipeline** job with a **GitHub** branch source for this repo, credentials `github-pat` (or none, since the repo is public), discovering **all branches**. Every branch gets the *Build images* check that pull requests require. Only `Main`, or a build given `DEPLOY_REF`, deploys.
-4. **Trigger on push:** in the GitHub repo, Settings → Webhooks → Add webhook, with payload URL `https://<your-jenkins>/github-webhook/` (keep the trailing slash), content type `application/json`, and just the push event. If GitHub can't reach your Jenkins, set the job's "Scan Multibranch Pipeline Triggers" to run every 5 minutes instead.
-5. **Recommended: require both checks before merging into `Main`**, so broken code can't reach the deploy. See [Protecting Main](#protecting-main).
-
-### Protecting Main
-
-Every pull request gets two checks:
-
-| Check | From | Proves |
-|---|---|---|
-| `Backend tests` | GitHub Actions (`.github/workflows/backend.yml`) | backend lint, migrations, tests |
-| `continuous-integration/jenkins/pr-head` | Jenkins (*Build images* stage, on the pull request build) | all three production images build, including the frontend's TypeScript compile |
-
-To require them: GitHub repo → **Settings → Branches → Add classic branch protection rule**:
-- **Branch name pattern:** `Main`
-- ✓ **Require a pull request before merging**
-- ✓ **Require status checks to pass before merging**, then search for and add **`Backend tests`** and **`continuous-integration/jenkins/pr-head`**. A check only appears in the search after it has run at least once in the past week, so open a pull request first. Don't pick `continuous-integration/jenkins/branch`: that's the status for branch builds, and once a branch has a pull request Jenkins builds it as the pull request instead, so a required `…/branch` check would wait forever.
-- ✓ **Require branches to be up to date before merging** (optional: re-runs the checks against the latest `Main`)
-- ✓ **Do not allow bypassing the above settings**, so it applies to admins too
-- **Create**
-
-Both workflows must run for every branch, or a pull request waits forever for a missing check. That's why `Backend tests` runs on every pull request, and the Jenkins job must not filter out feature branches.
-
-**If Jenkins runs on the same machine as the app:**
-- **Jenkins in a Docker container** (the usual case): inside the container, `localhost` is the container itself. Add this to the Jenkins service in its compose file and recreate it:
-  ```yaml
-  extra_hosts:
-    - "host.docker.internal:host-gateway"
-  ```
-  Then set `DEPLOY_HOST=<user>@host.docker.internal`. The Jenkins image needs an SSH client. Check with `docker exec <jenkins-container> which ssh`, and if it's missing, add `openssh-client` in the Jenkins Dockerfile.
-- **Jenkins installed directly on the VM:** set `DEPLOY_HOST=<user>@localhost`. Or leave `DEPLOY_HOST` empty to run `deploy.sh` without SSH, in which case the `jenkins` user must be in the `docker` group and own the checkout, and `DEPLOY_DIR` must be an absolute path.
-
-**A plain Pipeline job also works** instead of a Multibranch one. Choose *Pipeline script from SCM*, Git, this repo, branch `*/Main`, script path `Jenkinsfile`, and under Triggers tick *GitHub hook trigger for GITScm polling*. The webhook from step 4 triggers it.
-
-### Deploying a branch
-
-Open the job → **Build with Parameters** and set `DEPLOY_REF` to a branch name (or commit). That branch replaces whatever is deployed until the next push to `Main` puts `Main` back. The first build after adding the Jenkinsfile registers the parameter; until then the button just says *Build Now*.
-
-**Migrations don't switch back on their own.** If the branch adds a migration, the database moves ahead of `Main`, and the next `Main` deploy fails with `Can't locate revision`. Before switching back, while the branch is still deployed, downgrade on the server:
-
-```sh
-docker compose run --rm backend alembic downgrade <Main's head revision>
-```
-
-### Disk usage
-
-Builds clean up after themselves:
-- the *Build images* stage removes its image tags
-- `deploy.sh` removes images replaced by a deploy
-- both drop Docker build cache unused for 7 days
-
-Jenkins keeps the last 30 builds per branch or pull request. In the job's configuration, set **Orphaned Item Strategy → Discard old items** (e.g. 7 days), so jobs for merged pull requests and deleted branches are removed too.
-
-To check on the server: `docker system df` shows images, containers, volumes and build cache; `df -h /` shows free space. To reclaim space at once, `docker builder prune -f` empties the build cache, and the next build is slower.
-
-### Rolling back
-
-On the server, deploy any earlier commit:
-
-```sh
-git log --oneline -10 origin/Main     # find the commit
-scripts/deploy.sh <commit>
-```
-
-The next push to `Main` deploys the latest code again. Migrations aren't rolled back automatically. If the bad commit added one, see [Database migrations](#database-migrations).
 
 ## Troubleshooting
 

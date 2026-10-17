@@ -7,9 +7,9 @@
 // it's refused anywhere but localhost: on a VM or server, set a strong
 // SEED_DEV_PASSWORD in its .env and share it through a password manager.
 //
-// The account is created through Better Auth's own sign-up, so the password is
-// hashed exactly as sign-in expects. Running it again does nothing, and changing
-// SEED_DEV_PASSWORD later doesn't update an existing account.
+// Running it again only marks an existing dev account verified (ones made before
+// email verification was required aren't); changing SEED_DEV_PASSWORD later
+// doesn't update it.
 import { auth } from "./auth.js";
 
 const DEFAULT_PASSWORD = "secret123";
@@ -45,12 +45,28 @@ async function main() {
     }
 
     const ctx = await auth.$context;
-    if (await ctx.internalAdapter.findUserByEmail(account.email)) {
-        console.log(`Seed: ${account.email} already exists.`);
+    const existing = await ctx.internalAdapter.findUserByEmail(account.email);
+    if (existing) {
+        if (!existing.user.emailVerified) {
+            await ctx.internalAdapter.updateUser(existing.user.id, { emailVerified: true });
+            console.log(`Seed: ${account.email} already exists; marked it verified.`);
+        } else {
+            console.log(`Seed: ${account.email} already exists.`);
+        }
         return;
     }
 
-    await auth.api.signUpEmail({ body: account });
+    const user = await ctx.internalAdapter.createUser({
+        name: account.name,
+        email: account.email.toLowerCase(),
+        emailVerified: true,
+    }, { method: "email-password" });
+    await ctx.internalAdapter.linkAccount({
+        userId: user.id,
+        providerId: "credential",
+        accountId: user.id,
+        password: await ctx.password.hash(account.password),
+    });
     console.log(`Seed: created ${account.email}.`);
 }
 

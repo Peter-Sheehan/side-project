@@ -1,6 +1,15 @@
 import { betterAuth } from "better-auth";
 import { Pool } from "pg";
 import { genericOAuth } from "better-auth/plugins";
+import { APIError, createAuthMiddleware } from "better-auth/api";
+import {
+    existingAccountEmail,
+    sendEmail,
+    signUpCodeEmail,
+    verificationEmail,
+    type Email,
+} from "./mailer.js";
+import { signUpCode } from "./sign-up-code.js";
 
 const requiredEnv = (name: string): string => {
     const value = process.env[name];
@@ -34,6 +43,17 @@ const publicOrigin = (() => {
     }
     return url.origin;
 })();
+
+// A failed send is logged, not thrown: sign-up must answer the same way whether
+// or not the email was already registered, and an unverified user can get a
+// new link by signing in.
+async function sendSafely(email: Email): Promise<void> {
+    try {
+        await sendEmail(email);
+    } catch (err) {
+        console.error(`[mail] couldn't send "${email.subject}" to ${email.to}:`, err);
+    }
+}
 
 const pool = new Pool({
     connectionString: requiredEnv("DATABASE_URL"),
@@ -153,9 +173,39 @@ export const auth = betterAuth({
 
     emailAndPassword: {
         enabled: true,
-        // Sign-up only creates the account; the user then signs in on the
-        // sign-in card. Without this, sign-up also starts a session.
         autoSignIn: false,
+        // Mirrored in frontend/src/lib/sign-up-validation.ts.
+        minPasswordLength: 8,
+        maxPasswordLength: 128,
+        requireEmailVerification: true,
+    },
+
+    emailVerification: {
+        sendOnSignUp: false,
+        sendOnSignIn: true,
+        // Redirects to the frontend's callbackURL (/login), which forwards
+        // signed-in users on.
+        autoSignInAfterVerification: true,
+        expiresIn: 60 * 60,
+        sendVerificationEmail: async ({ user, url }) => {
+            await sendSafely(verificationEmail(user.email, user.name, url));
+        },
+    },
+
+    hooks: {
+        before: createAuthMiddleware(async (ctx) => {
+            if (ctx.path !== "/sign-up/email") return;
+            const password: unknown = ctx.body?.password;
+            if (
+                typeof password === "string" &&
+                !(/[A-Za-z]/.test(password) && /\d/.test(password))
+            ) {
+                throw new APIError("BAD_REQUEST", {
+                    code: "PASSWORD_TOO_WEAK",
+                    message: "Password must contain at least one letter and one number.",
+                });
+            }
+        }),
     },
 
     // Sessions end after 30 minutes without activity. GET /api/auth/get-session
@@ -182,6 +232,11 @@ export const auth = betterAuth({
     },
 
     plugins: [
+        signUpCode({
+            sendCode: (email, code) => sendSafely(signUpCodeEmail(email, code)),
+            sendExistingAccount: (user) =>
+                sendSafely(existingAccountEmail(user.email, user.name, `${publicOrigin}/login`)),
+        }),
         ...(genericProviders.length > 0
             ? [
                 genericOAuth({

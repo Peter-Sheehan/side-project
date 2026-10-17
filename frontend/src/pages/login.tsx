@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import {
   GitCommitHorizontal,
   Package,
@@ -11,6 +11,7 @@ import { authClient } from '../lib/auth-client';
 import { useAuth } from '../lib/auth-context';
 import { SignInCard } from '../components/sign-in-card';
 import { SignUpCard, type SignUpCredentials } from '../components/sign-up-card';
+import { toSignUpError } from '../lib/sign-up-validation';
 import { Badge } from '../shadcn/components/ui/badge';
 
 import styles from './login.module.scss';
@@ -48,6 +49,14 @@ const defaultFeatures: readonly Feature[] = [
   },
 ];
 
+// A failed verification link redirects to /login?error=<code>.
+function verifyLinkNotice(error: string | null): string | null {
+  if (!error) return null;
+  return error === 'TOKEN_EXPIRED'
+    ? 'That confirmation link has expired. Sign in to get a new one.'
+    : "That confirmation link isn't valid. Sign in to get a new one.";
+}
+
 export default function LoginPage({
   productName = 'SideProject',
   description =
@@ -57,7 +66,11 @@ export default function LoginPage({
   const navigate = useNavigate();
   const { refreshSession } = useAuth();
   const [mode, setMode] = useState<AuthMode>('signin');
-  const [notice, setNotice] = useState<string | null>(null);
+  const [searchParams] = useSearchParams();
+  const [signInEmail, setSignInEmail] = useState('');
+  const [notice, setNotice] = useState<string | null>(() =>
+    verifyLinkNotice(searchParams.get('error')),
+  );
 
   async function handleSignIn({
     email,
@@ -69,8 +82,14 @@ export default function LoginPage({
     const result = await authClient.signIn.email({
       email,
       password,
+      callbackURL: '/login',
     });
 
+    if (result.error?.code === 'EMAIL_NOT_VERIFIED') {
+      throw new Error(
+        `Confirm your email first. We've sent a new link to ${email}.`,
+      );
+    }
     if (result.error) {
       throw new Error(result.error.message || 'Authentication failed.');
     }
@@ -87,23 +106,25 @@ export default function LoginPage({
   }
 
 
+  async function postSignUpStep(path: string, body: object) {
+    const { error } = await authClient.$fetch(path, { method: 'POST', body });
+    if (error) throw toSignUpError(error);
+  }
+
+  const handleSendCode = (email: string) =>
+    postSignUpStep('/sign-up/send-code', { email });
+
+  const handleVerifyCode = (email: string, code: string) =>
+    postSignUpStep('/sign-up/verify-code', { email, code });
+
   async function handleSignUp({
     name,
     email,
     password,
+    code,
   }: SignUpCredentials): Promise<void> {
-    const result = await authClient.signUp.email({
-      name,
-      email,
-      password,
-    });
-
-    if (result.error) {
-      throw new Error(result.error.message || 'Account creation failed.');
-    }
-
-    // Sign-up doesn't start a session (autoSignIn is off in the auth service),
-    // so send the user to the sign-in card.
+    await postSignUpStep('/sign-up/email', { name, email, password, code });
+    setSignInEmail(email);
     setNotice('Account created. Sign in to continue.');
     setMode('signin');
   }
@@ -164,11 +185,14 @@ export default function LoginPage({
               onSignIn={handleSignIn}
               onSignUp={() => changeMode('signup')}
               notice={notice}
+              defaultEmail={signInEmail}
               termsHref="/terms"
               privacyHref="/privacy"
             />
           ) : (
             <SignUpCard
+              onSendCode={handleSendCode}
+              onVerifyCode={handleVerifyCode}
               onSignUp={handleSignUp}
               onSignIn={() => changeMode('signin')}
               termsHref="/terms"
